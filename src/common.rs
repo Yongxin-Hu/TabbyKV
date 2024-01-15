@@ -62,13 +62,13 @@ pub enum OpsError{
 }
 
 impl From<serde_json::Error> for OpsError{
-    fn from(err: serde_json::Error) -> OpsError {
+    fn from(_err: serde_json::Error) -> OpsError {
         OpsError::SerdeError
     }
 }
 
 impl From<std::io::Error> for OpsError{
-    fn from(err: std::io::Error) -> OpsError {
+    fn from(_err: std::io::Error) -> OpsError {
         OpsError::IOError
     }
 }
