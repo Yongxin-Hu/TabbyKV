@@ -1,3 +1,5 @@
+mod lsm;
+
 use std::collections::HashMap;
 
 pub trait Engine{
