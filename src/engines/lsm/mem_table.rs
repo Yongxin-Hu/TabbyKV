@@ -36,12 +36,20 @@ impl MemTable {
     /// In week 1, day 1, simply put the key-value pair into the skipmap.
     /// In week 2, day 6, also flush the data to WAL.
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        let estimated_size = key.len() + value.len();
         self.map.insert(Bytes::copy_from_slice(key),Bytes::copy_from_slice(value));
+        self.approximate_size
+            .fetch_add(estimated_size, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
     pub fn id(&self) -> usize {
         self.id
+    }
+
+    pub fn approximate_size(&self) -> usize {
+        self.approximate_size
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
