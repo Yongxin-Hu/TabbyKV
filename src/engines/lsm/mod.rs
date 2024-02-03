@@ -4,3 +4,4 @@ mod lsm_storage;
 mod table;
 mod compact;
 mod iterators;
+mod common;
