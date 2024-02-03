@@ -1,28 +1,130 @@
+use std::cmp;
+use std::collections::binary_heap::PeekMut;
+use std::collections::BinaryHeap;
 use crate::engines::lsm::iterators::StorageIterator;
 
-pub struct MergeIterator<I: StorageIterator>;
+struct HeapWrapper<I: StorageIterator>(pub usize, pub Box<I>);
+
+impl<I: StorageIterator> PartialEq for HeapWrapper<I> {
+    fn eq(&self, other: &Self) -> bool {
+        self.partial_cmp(other).unwrap() == cmp::Ordering::Equal
+    }
+}
+
+impl<I: StorageIterator> Eq for HeapWrapper<I> {}
+
+impl<I: StorageIterator> PartialOrd for HeapWrapper<I> {
+    #[allow(clippy::non_canonical_partial_ord_impl)]
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        match self.1.key().cmp(&other.1.key()) {
+            cmp::Ordering::Greater => Some(cmp::Ordering::Greater),
+            cmp::Ordering::Less => Some(cmp::Ordering::Less),
+            cmp::Ordering::Equal => self.0.partial_cmp(&other.0),
+        }.map(|x| x.reverse())
+    }
+}
+
+impl<I: StorageIterator> Ord for HeapWrapper<I> {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+pub struct MergeIterator<I: StorageIterator>{
+    iters: BinaryHeap<HeapWrapper<I>>,
+    current: Option<HeapWrapper<I>>,
+}
 
 impl <I: StorageIterator> MergeIterator<I>{
-    pub fn create(iters: Vec<I>) -> MergeIterator<I> {
-        unimplemented!()
+    pub fn create(iters: Vec<Box<I>>) -> MergeIterator<I> {
+
+        if iters.is_empty() {
+            return MergeIterator{
+                iters: BinaryHeap::new(),
+                current: None
+            }
+        }
+
+        if iters.iter().all(|x| !x.is_valid()){
+            let mut iters = iters;
+            return MergeIterator{
+                iters: BinaryHeap::new(),
+                current: Some(HeapWrapper(0, iters.pop().unwrap())),
+            }
+        }
+        let mut heap = BinaryHeap::new();
+        for (idx, iter) in iters.into_iter().enumerate(){
+            if iter.is_valid() {
+                heap.push(HeapWrapper(idx, iter));
+            }
+        }
+        let current = heap.pop().unwrap();
+
+        MergeIterator{
+            iters: heap,
+            current: Some(current)
+        }
     }
 }
 
 impl <I: StorageIterator> StorageIterator for MergeIterator<I>{
     fn value(&self) -> &[u8] {
-        todo!()
+        self.current.as_ref().unwrap().1.value()
     }
 
     fn key(&self) -> &[u8] {
-        todo!()
+        self.current.as_ref().unwrap().1.key()
     }
 
     fn is_valid(&self) -> bool {
-        todo!()
+        self.current
+            .as_ref()
+            .map(|x| x.1.is_valid())
+            .unwrap_or(false)
     }
 
     fn next(&mut self) -> anyhow::Result<()> {
-        todo!()
+        let current = self.current.as_mut().unwrap();
+        // Pop the item out of the heap if they have the same value.
+        while let Some(mut inner_iter) = self.iters.peek_mut() {
+            debug_assert!(
+                inner_iter.1.key() >= current.1.key(),
+                "heap invariant violated"
+            );
+            if inner_iter.1.key() == current.1.key() {
+                // Case 1: an error occurred when calling `next`.
+                if let e @ Err(_) = inner_iter.1.next() {
+                    PeekMut::pop(inner_iter);
+                    return e;
+                }
+
+                // Case 2: iter is no longer valid.
+                if !inner_iter.1.is_valid() {
+                    PeekMut::pop(inner_iter);
+                }
+            } else {
+                break;
+            }
+        }
+
+        current.1.next()?;
+
+        // If the current iterator is invalid, pop it out of the heap and select the next one.
+        if !current.1.is_valid() {
+            if let Some(iter) = self.iters.pop() {
+                *current = iter;
+            }
+            return Ok(());
+        }
+
+        // Otherwise, compare with heap top and swap if necessary.
+        if let Some(mut inner_iter) = self.iters.peek_mut() {
+            if *current < *inner_iter {
+                std::mem::swap(&mut *inner_iter, current);
+            }
+        }
+
+        Ok(())
     }
 }
 
