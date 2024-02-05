@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{Bound, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -11,17 +11,20 @@ use crate::engines::lsm::compact::{
 };
 use anyhow::Result;
 use bytes::Bytes;
+use crate::engines::lsm::iterators::fused_iterator::FusedIterator;
+use crate::engines::lsm::iterators::LsmIterator;
+use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 
+// LSM-tree 状态
 #[derive(Clone)]
 pub struct LsmStorageState {
-    /// The current memtable.
-    pub memtable: Arc<MemTable>,
-    /// Immutable memtables, from latest to earliest.
-    pub imm_memtables: Vec<Arc<MemTable>>,
-    /// L0 SSTs, from latest to earliest.
+    /// 当前活跃的 mem_table
+    pub active_memtable: Arc<MemTable>,
+    /// 只读的 mem_table
+    pub readonly_memtables: Vec<Arc<MemTable>>,
+    /// L0 layer sstables's id
     pub l0_sstables: Vec<usize>,
-    /// SsTables sorted by key range; L1 - L_max for leveled compaction, or tiers for tiered
-    /// compaction.
+    /// L1 - Lmax layer sstables, (layer, Vec(sstable id))
     pub levels: Vec<(usize, Vec<usize>)>,
     /// SST objects.
     pub sstables: HashMap<usize, Arc<SsTable>>,
@@ -39,8 +42,8 @@ impl LsmStorageState{
             CompactionOptions::NoCompaction => vec![(1, Vec::new())],
         };
         Self {
-            memtable: Arc::new(MemTable::create(0)),
-            imm_memtables: Vec::new(),
+            active_memtable: Arc::new(MemTable::create(0)),
+            readonly_memtables: Vec::new(),
             l0_sstables: Vec::new(),
             levels,
             sstables: Default::default(),
@@ -123,15 +126,14 @@ impl LsmStorageInner{
         Ok(storage)
     }
 
-    /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
-        // mem_table
-        if let Some(value) = self.state.read().memtable.get(key){
+        // active_memtable
+        if let Some(value) = self.state.read().active_memtable.get(key){
             if value.len() == 0 { return Ok(None)}
             return Ok(Some(value))
         }
-        // imm_memtables
-        for memtable in self.state.read().imm_memtables.iter(){
+        // readonly_memtables
+        for memtable in self.state.read().readonly_memtables.iter(){
             if let Some(value) = memtable.get(key){
                 if value.len() == 0 { return Ok(None)}
                 return Ok(Some(value))
@@ -147,8 +149,8 @@ impl LsmStorageInner{
         let size;
         {
             let guard = self.state.read();
-            guard.memtable.put(key, value)?;
-            size = guard.memtable.approximate_size();
+            guard.active_memtable.put(key, value)?;
+            size = guard.active_memtable.approximate_size();
         }
         self.try_freeze(size)?;
         Ok(())
@@ -160,12 +162,16 @@ impl LsmStorageInner{
         let size;
         {
             let guard = self.state.read();
-            guard.memtable.put(key, b"")?;
-            size = guard.memtable.approximate_size();
+            guard.active_memtable.put(key, b"")?;
+            size = guard.active_memtable.approximate_size();
         }
         self.try_freeze(size)?;
 
         Ok(())
+    }
+
+    pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<FusedIterator<LsmIterator>>{
+        unimplemented!()
     }
 
     fn try_freeze(&self, estimated_size: usize) -> Result<()> {
@@ -173,7 +179,7 @@ impl LsmStorageInner{
             let state_lock = self.state_lock.lock();
             let guard = self.state.read();
             // the memtable could have already been frozen, check again to ensure we really need to freeze
-            if guard.memtable.approximate_size() >= self.options.target_sst_size {
+            if guard.active_memtable.approximate_size() >= self.options.target_sst_size {
                 drop(guard);
                 self.force_freeze_memtable(&state_lock)?;
             }
@@ -192,9 +198,9 @@ impl LsmStorageInner{
         let mut guard = self.state.write();
         // Swap the current memtable with a new one.
         let mut snapshot = guard.as_ref().clone();
-        let old_memtable = std::mem::replace(&mut snapshot.memtable, memtable);
+        let old_memtable = std::mem::replace(&mut snapshot.active_memtable, memtable);
         // Add the memtable to the immutable memtables.
-        snapshot.imm_memtables.insert(0, old_memtable.clone());
+        snapshot.readonly_memtables.insert(0, old_memtable.clone());
         // Update the snapshot.
         *guard = Arc::new(snapshot);
 
@@ -207,8 +213,14 @@ impl LsmStorageInner{
 
 #[cfg(test)]
 mod test{
+    use std::collections::Bound;
+    use std::sync::Arc;
+    use bytes::Bytes;
     use tempfile::tempdir;
+    use crate::engines::lsm::iterators::{LsmIterator, StorageIterator};
+    use crate::engines::lsm::iterators::fused_iterator::FusedIterator;
     use crate::engines::lsm::lsm_storage::{LsmStorageInner, LsmStorageOptions};
+    use crate::engines::lsm::utils::{check_iter_result_by_key, check_lsm_iter_result_by_key};
 
     #[test]
     fn test_storage_integration() {
@@ -238,8 +250,8 @@ mod test{
         storage
             .force_freeze_memtable(&storage.state_lock.lock())
             .unwrap();
-        assert_eq!(storage.state.read().imm_memtables.len(), 1);
-        let previous_approximate_size = storage.state.read().imm_memtables[0].approximate_size();
+        assert_eq!(storage.state.read().readonly_memtables.len(), 1);
+        let previous_approximate_size = storage.state.read().readonly_memtables[0].approximate_size();
         assert!(previous_approximate_size >= 15);
         storage.put(b"1", b"2333").unwrap();
         storage.put(b"2", b"23333").unwrap();
@@ -247,9 +259,9 @@ mod test{
         storage
             .force_freeze_memtable(&storage.state_lock.lock())
             .unwrap();
-        assert_eq!(storage.state.read().imm_memtables.len(), 2);
-        assert_eq!(storage.state.read().imm_memtables[1].approximate_size(), previous_approximate_size, "wrong order of memtables?");
-        assert!(storage.state.read().imm_memtables[0].approximate_size() > previous_approximate_size);
+        assert_eq!(storage.state.read().readonly_memtables.len(), 2);
+        assert_eq!(storage.state.read().readonly_memtables[1].approximate_size(), previous_approximate_size, "wrong order of memtables?");
+        assert!(storage.state.read().readonly_memtables[0].approximate_size() > previous_approximate_size);
     }
 
     #[test]
@@ -262,13 +274,13 @@ mod test{
         for _ in 0..1000 {
             storage.put(b"1", b"2333").unwrap();
         }
-        let num_imm_memtables = storage.state.read().imm_memtables.len();
+        let num_imm_memtables = storage.state.read().readonly_memtables.len();
         assert!(num_imm_memtables >= 1, "no memtable frozen?");
         for _ in 0..1000 {
             storage.delete(b"1").unwrap();
         }
         assert!(
-            storage.state.read().imm_memtables.len() > num_imm_memtables,
+            storage.state.read().readonly_memtables.len() > num_imm_memtables,
             "no more memtable frozen?"
         );
     }
@@ -294,11 +306,64 @@ mod test{
             .unwrap();
         storage.put(b"1", b"233333").unwrap();
         storage.put(b"3", b"233333").unwrap();
-        assert_eq!(storage.state.read().imm_memtables.len(), 2);
+        assert_eq!(storage.state.read().readonly_memtables.len(), 2);
         assert_eq!(&storage.get(b"1").unwrap().unwrap()[..], b"233333");
         assert_eq!(&storage.get(b"2").unwrap(), &None);
         assert_eq!(&storage.get(b"3").unwrap().unwrap()[..], b"233333");
         assert_eq!(&storage.get(b"4").unwrap().unwrap()[..], b"23333");
+    }
+
+    #[test]
+    fn test_task4_integration() {
+        let dir = tempdir().unwrap();
+        let storage = Arc::new(
+            LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap(),
+        );
+        storage.put(b"1", b"233").unwrap();
+        storage.put(b"2", b"2333").unwrap();
+        storage.put(b"3", b"23333").unwrap();
+        storage
+            .force_freeze_memtable(&storage.state_lock.lock())
+            .unwrap();
+        storage.delete(b"1").unwrap();
+        storage.delete(b"2").unwrap();
+        storage.put(b"3", b"2333").unwrap();
+        storage.put(b"4", b"23333").unwrap();
+        storage
+            .force_freeze_memtable(&storage.state_lock.lock())
+            .unwrap();
+        storage.put(b"1", b"233333").unwrap();
+        storage.put(b"3", b"233333").unwrap();
+        {
+            let mut iter = storage.scan(Bound::Unbounded, Bound::Unbounded).unwrap();
+            check_lsm_iter_result_by_key(
+                &mut iter,
+                vec![
+                    (Bytes::from_static(b"1"), Bytes::from_static(b"233333")),
+                    (Bytes::from_static(b"3"), Bytes::from_static(b"233333")),
+                    (Bytes::from_static(b"4"), Bytes::from_static(b"23333")),
+                ],
+            );
+            assert!(!iter.is_valid());
+            iter.next().unwrap();
+            iter.next().unwrap();
+            iter.next().unwrap();
+            assert!(!iter.is_valid());
+        }
+        {
+            let mut iter = storage
+                .scan(Bound::Included(b"2"), Bound::Included(b"3"))
+                .unwrap();
+            check_lsm_iter_result_by_key(
+                &mut iter,
+                vec![(Bytes::from_static(b"3"), Bytes::from_static(b"233333"))],
+            );
+            assert!(!iter.is_valid());
+            iter.next().unwrap();
+            iter.next().unwrap();
+            iter.next().unwrap();
+            assert!(!iter.is_valid());
+        }
     }
 }
 

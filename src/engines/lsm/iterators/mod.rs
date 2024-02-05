@@ -2,8 +2,8 @@ use anyhow::bail;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 use crate::engines::lsm::mem_table::MemTableIterator;
 
-mod merge_iterator;
-mod fused_iterator;
+pub mod merge_iterator;
+pub mod fused_iterator;
 
 pub trait StorageIterator {
     /// 获取当前 value

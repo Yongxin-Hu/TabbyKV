@@ -5,3 +5,5 @@ mod table;
 mod compact;
 mod iterators;
 mod common;
+mod utils;
+mod skiplist;

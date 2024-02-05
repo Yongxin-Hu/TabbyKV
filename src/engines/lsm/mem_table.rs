@@ -6,6 +6,7 @@ use crossbeam_skiplist::SkipMap;
 use crate::engines::lsm::wal::Wal;
 use anyhow::Result;
 use crossbeam_skiplist::map::Entry;
+use ouroboros::self_referencing;
 use crate::engines::lsm::iterators::StorageIterator;
 
 pub struct MemTable {
