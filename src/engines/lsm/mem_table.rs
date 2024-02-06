@@ -8,6 +8,7 @@ use anyhow::Result;
 use crossbeam_skiplist::map::Entry;
 use ouroboros::self_referencing;
 use crate::engines::lsm::iterators::StorageIterator;
+use crate::engines::lsm::utils::map_bound;
 
 pub struct MemTable {
     map: Arc<SkipMap<Bytes, Bytes>>,
@@ -45,21 +46,16 @@ impl MemTable {
     }
 
     pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> MemTableIterator {
-        let map_bound = |source: Bound<&[u8]>| {
-            match source {
-                Bound::Included(t) => Bound::Included(Bytes::copy_from_slice(t)),
-                Bound::Excluded(t) => Bound::Excluded(Bytes::copy_from_slice(t)),
-                Bound::Unbounded => Bound::Unbounded
-            }
-        };
         let (lower, upper) = (map_bound(lower), map_bound(upper));
-        let current = self.map.lower_bound(lower.as_ref());
-        MemTableIterator{
-            map: Arc::clone(&self.map),
-            upper,
-            lower,
-            current
+        let mut iter = MemTableIteratorBuilder {
+            map: self.map.clone(),
+            iter_builder: |map| map.range((lower, upper)),
+            item: (Bytes::new(), Bytes::new()),
         }
+            .build();
+        let entry = iter.with_iter_mut(|iter| MemTableIterator::entry_to_item(iter.next()));
+        iter.with_mut(|x| *x.item = entry);
+        iter
     }
 
     pub fn id(&self) -> usize {
@@ -72,40 +68,46 @@ impl MemTable {
     }
 }
 
-pub struct MemTableIterator<'a> {
+type SkipMapRangeIter<'a> =
+crossbeam_skiplist::map::Range<'a, Bytes, (Bound<Bytes>, Bound<Bytes>), Bytes, Bytes>;
+
+#[self_referencing]
+pub struct MemTableIterator {
+    /// Stores a reference to the skipmap.
     map: Arc<SkipMap<Bytes, Bytes>>,
-    lower: Bound<Bytes>,
-    upper: Bound<Bytes>,
-    current: Option<Entry<'a, Bytes, Bytes>>,
+    /// Stores a skipmap iterator that refers to the lifetime of `MemTableIterator` itself.
+    #[borrows(map)]
+    #[not_covariant]
+    iter: SkipMapRangeIter<'this>,
+    /// Stores the current key-value pair.
+    item: (Bytes, Bytes),
 }
 
-impl StorageIterator for MemTableIterator<'_> {
+impl MemTableIterator {
+    fn entry_to_item(entry: Option<Entry<'_, Bytes, Bytes>>) -> (Bytes, Bytes) {
+        entry
+            .map(|x| (x.key().clone(), x.value().clone()))
+            .unwrap_or_else(|| (Bytes::from_static(&[]), Bytes::from_static(&[])))
+    }
+}
+
+impl StorageIterator for MemTableIterator {
+
     fn value(&self) -> &[u8] {
-        self.current
-            .as_ref()
-            .map_or_else(|| &[][..], |entry| entry.value().as_ref())
+        &self.borrow_item().1[..]
     }
 
     fn key(&self) -> &[u8] {
-        self.current
-            .as_ref()
-            .map_or_else(|| &[][..], |entry| entry.key().as_ref())
+        &self.borrow_item().0[..]
     }
 
     fn is_valid(&self) -> bool {
-        self.current.is_some()
+        !self.borrow_item().0.is_empty()
     }
 
     fn next(&mut self) -> Result<()> {
-        self.current = self.current.clone().and_then(|entry| {
-            entry.next().filter(|next| {
-                match &self.upper {
-                    Bound::Unbounded => true,
-                    Bound::Included(upp) => upp >= next.key(),
-                    Bound::Excluded(upp) => upp > next.key(),
-                }
-            })
-        });
+        let entry = self.with_iter_mut(|iter| MemTableIterator::entry_to_item(iter.next()));
+        self.with_mut(|x| *x.item = entry);
         Ok(())
     }
 }

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use anyhow::bail;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 use crate::engines::lsm::mem_table::MemTableIterator;
@@ -19,19 +20,19 @@ pub trait StorageIterator {
     fn next(&mut self) -> anyhow::Result<()>;
 }
 
-type LsmIteratorInner<'a> = MergeIterator<MemTableIterator<'a>>;
+type LsmIteratorInner = MergeIterator<MemTableIterator>;
 
-pub struct LsmIterator<'a> {
-    inner: LsmIteratorInner<'a>,
+pub struct LsmIterator {
+    inner: LsmIteratorInner,
 }
 
-impl <'a> LsmIterator<'a>{
-    pub fn new(iter: LsmIteratorInner<'a>) -> LsmIterator<'a>{
+impl LsmIterator{
+    pub fn new(iter: LsmIteratorInner) -> LsmIterator{
         Self{ inner: iter }
     }
 }
 
-impl StorageIterator for LsmIterator<'_>{
+impl StorageIterator for LsmIterator{
     fn value(&self) -> &[u8] {
         self.inner.value()
     }

@@ -171,7 +171,19 @@ impl LsmStorageInner{
     }
 
     pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<FusedIterator<LsmIterator>>{
-        unimplemented!()
+        let snapshot = {
+            let guard = self.state.read();
+            Arc::clone(&guard)
+        };
+
+        let mut iters = Vec::with_capacity(
+            snapshot.readonly_memtables.len() + 1 /* activate mem_table */);
+        iters.push(Box::new(snapshot.active_memtable.scan(lower, upper)));
+        for imm_memtable in &snapshot.readonly_memtables {
+            iters.push(Box::new(imm_memtable.scan(lower, upper)));
+        }
+        let mem_table_iters = MergeIterator::create(iters);
+        Ok(FusedIterator::new(LsmIterator::new(mem_table_iters)))
     }
 
     fn try_freeze(&self, estimated_size: usize) -> Result<()> {
@@ -314,7 +326,7 @@ mod test{
     }
 
     #[test]
-    fn test_task4_integration() {
+    fn test_integration() {
         let dir = tempdir().unwrap();
         let storage = Arc::new(
             LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap(),
@@ -340,6 +352,7 @@ mod test{
                 &mut iter,
                 vec![
                     (Bytes::from_static(b"1"), Bytes::from_static(b"233333")),
+                    (Bytes::from_static(b"2"), Bytes::from_static(b"")),
                     (Bytes::from_static(b"3"), Bytes::from_static(b"233333")),
                     (Bytes::from_static(b"4"), Bytes::from_static(b"23333")),
                 ],
@@ -356,7 +369,10 @@ mod test{
                 .unwrap();
             check_lsm_iter_result_by_key(
                 &mut iter,
-                vec![(Bytes::from_static(b"3"), Bytes::from_static(b"233333"))],
+                vec![
+                    (Bytes::from_static(b"2"), Bytes::from_static(b"")),
+                    (Bytes::from_static(b"3"), Bytes::from_static(b"233333"))
+                ],
             );
             assert!(!iter.is_valid());
             iter.next().unwrap();
@@ -365,5 +381,35 @@ mod test{
             assert!(!iter.is_valid());
         }
     }
+
+    #[test]
+
+    fn test_integration_2() {
+        let dir = tempdir().unwrap();
+        let storage = Arc::new(
+            LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap(),
+        );
+        storage.put(b"1", b"233").unwrap();
+        storage.put(b"2", b"2333").unwrap();
+        storage.put(b"3", b"23333").unwrap();
+        storage
+            .force_freeze_memtable(&storage.state_lock.lock())
+            .unwrap();
+        storage.delete(b"1").unwrap();
+        storage.delete(b"2").unwrap();
+        storage.put(b"3", b"2333").unwrap();
+        storage.put(b"4", b"23333").unwrap();
+        storage
+            .force_freeze_memtable(&storage.state_lock.lock())
+            .unwrap();
+        storage.put(b"1", b"233333").unwrap();
+        storage.put(b"3", b"233333").unwrap();
+        let mut iter = storage.scan(Bound::Unbounded, Bound::Unbounded).unwrap();
+        while iter.is_valid() {
+            println!("key:{:?}, value: {:?}", String::from_utf8(iter.key().to_vec()), String::from_utf8(iter.value().to_vec()));
+            iter.next();
+        }
+    }
+
 }
 

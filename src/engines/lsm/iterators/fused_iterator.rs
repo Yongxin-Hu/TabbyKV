@@ -51,7 +51,6 @@ impl <I: StorageIterator> StorageIterator for FusedIterator<I>{
 
 #[cfg(test)]
 mod test{
-    use anyhow::bail;
     use bytes::Bytes;
     use crate::engines::lsm::iterators::fused_iterator::FusedIterator;
     use crate::engines::lsm::iterators::StorageIterator;
