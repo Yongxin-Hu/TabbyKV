@@ -210,4 +210,31 @@ mod test{
         assert_eq!(block_iterator.value(), b"value2");
     }
 
+    #[test]
+    fn test_block_seek_key() {
+        let block = Arc::new(generate_block());
+        let mut iter = BlockIterator::create_and_seek_to_key(block, key_of(0).as_slice());
+        for offset in 1..=5 {
+            for i in 0..num_of_keys() {
+                let key = iter.key();
+                let value = iter.value();
+                assert_eq!(
+                    key,
+                    key_of(i).as_slice(),
+                    "expected key: {:?}, actual key: {:?}",
+                    as_bytes(key_of(i).as_slice()),
+                    as_bytes(key)
+                );
+                assert_eq!(
+                    value,
+                    value_of(i),
+                    "expected value: {:?}, actual value: {:?}",
+                    as_bytes(&value_of(i)),
+                    as_bytes(value)
+                );
+                iter.seek_to_key(&format!("key_{:03}", i * 5 + offset).into_bytes());
+            }
+            iter.seek_to_key(b"k");
+        }
+    }
 }
