@@ -13,6 +13,7 @@ use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 
 // Block元信息
+#[derive(Debug, PartialEq)]
 struct BlockMeta {
     pub offset: usize,
     pub first_key: Bytes,
@@ -96,4 +97,30 @@ pub struct SsTable {
     id: usize,
     first_key: Bytes,
     last_key: Bytes,
+}
+
+#[cfg(test)]
+mod test {
+    use bytes::Bytes;
+    use crate::engines::lsm::table::BlockMeta;
+
+    #[test]
+    fn test_block_meta() {
+        let origin_block_meta = vec![
+            BlockMeta{
+                offset: 0,
+                first_key: Bytes::from("key1"),
+                last_key:Bytes::from("key2")
+            },
+            BlockMeta{
+                offset: 1,
+                first_key: Bytes::from("key3"),
+                last_key:Bytes::from("key4")
+            }
+        ];
+        let mut buf = Vec::new();
+        BlockMeta::encode_to_buf(origin_block_meta.iter().clone().as_ref(), &mut buf);
+        let result = BlockMeta::decode_from_buf(&mut buf).unwrap();
+        assert_eq!(origin_block_meta, result)
+    }
 }
