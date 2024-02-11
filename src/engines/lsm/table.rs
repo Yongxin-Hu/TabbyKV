@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
+use crate::engines::lsm::block::Block;
 
 // Block元信息
 #[derive(Debug, PartialEq)]
@@ -97,6 +98,43 @@ pub struct SsTable {
     id: usize,
     first_key: Bytes,
     last_key: Bytes,
+}
+
+impl SsTable {
+    // 打开一个 sstable
+    pub fn open(id: usize, file: FileObject) -> Result<Self> {
+        unimplemented!()
+    }
+
+    // 获取 sstable 的第 index 个 Block
+    pub fn read_block(&self, index: usize) -> Result<Arc<Block>> {
+        unimplemented!()
+    }
+
+    // 找到一个可能包含key的Block
+    pub fn find_block_idx() -> usize{
+        unimplemented!()
+    }
+
+    pub fn num_of_blocks(&self) -> usize {
+        self.block_meta.len()
+    }
+
+    pub fn first_key(&self) -> Bytes {
+        self.first_key.clone()
+    }
+
+    pub fn last_key(&self) -> Bytes {
+        self.last_key.clone()
+    }
+
+    pub fn table_size(&self) -> u64 {
+        self.file.1
+    }
+
+    pub fn sst_id(&self) -> usize {
+        self.id
+    }
 }
 
 #[cfg(test)]

@@ -90,7 +90,6 @@ impl SsTableBuilder{
 mod test {
     use tempfile::tempdir;
     use crate::engines::lsm::table::builder::SsTableBuilder;
-    use crate::engines::lsm::table::FileObject;
 
     #[test]
     fn simple_test_sst_builder() {
@@ -99,5 +98,20 @@ mod test {
         sstable_builder.add(b"key1", b"value1");
         let path = dir.path().join("1.sst");
         let sst = sstable_builder.build(0, path).unwrap();
+    }
+
+    #[test]
+    fn test_block_split(){
+        let mut builder = SsTableBuilder::new(16);
+        builder.add(b"11", b"11");
+        builder.add(b"22", b"22");
+        builder.add(b"33", b"33");
+        builder.add(b"44", b"44");
+        builder.add(b"55", b"55");
+        builder.add(b"66", b"66");
+        assert!(builder.meta.len() >= 2);
+        let mut dir = tempdir().unwrap();
+        let path = dir.path().join("1.sst");
+        let sst = builder.build(0, path).unwrap();
     }
 }
