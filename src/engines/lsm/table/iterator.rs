@@ -76,15 +76,13 @@ impl StorageIterator for SsTableIterator {
     }
 
     fn next(&mut self) -> Result<()> {
-        if self.is_valid() {
-            self.block_iterator.next();
-            return Ok(());
-        }
-
-        self.block_index += 1;
-        if self.block_index <= self.table.num_of_blocks() {
-            let block = self.table.read_block(self.block_index)?;
-            self.block_iterator = BlockIterator::create_and_seek_to_first(block);
+        self.block_iterator.next();
+        if !self.is_valid(){
+            self.block_index += 1;
+            if self.block_index < self.table.num_of_blocks() {
+                let block = self.table.read_block(self.block_index)?;
+                self.block_iterator = BlockIterator::create_and_seek_to_first(block);
+            }
         }
         Ok(())
     }

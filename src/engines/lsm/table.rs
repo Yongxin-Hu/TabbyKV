@@ -160,10 +160,13 @@ impl SsTable {
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
     use bytes::Bytes;
     use tempfile::{TempDir, tempdir};
+    use crate::engines::lsm::iterators::StorageIterator;
     use crate::engines::lsm::table::{BlockMeta, SsTable};
     use crate::engines::lsm::table::builder::SsTableBuilder;
+    use crate::engines::lsm::table::iterator::SsTableIterator;
 
     #[test]
     fn test_block_meta() {
@@ -228,6 +231,39 @@ mod test {
             new_sst.last_key(),
             key_of(num_of_keys() - 1)
         );
+    }
+
+    fn as_bytes(x: &[u8]) -> Bytes {
+        Bytes::copy_from_slice(x)
+    }
+
+    #[test]
+    fn test_sst_iterator() {
+        let (_dir, sst) = generate_sst();
+        let sst = Arc::new(sst);
+        let mut iter = SsTableIterator::create_and_seek_to_first(sst).unwrap();
+        for _ in 0..5 {
+            for i in 0..num_of_keys() {
+                let key = iter.key();
+                let value = iter.value();
+                assert_eq!(
+                    key,
+                    key_of(i),
+                    "expected key: {:?}, actual key: {:?}",
+                    as_bytes(key_of(i).as_ref()),
+                    as_bytes(key.as_ref())
+                );
+                assert_eq!(
+                    value,
+                    value_of(i),
+                    "expected value: {:?}, actual value: {:?}",
+                    as_bytes(&value_of(i)),
+                    as_bytes(value)
+                );
+                iter.next().unwrap();
+            }
+            iter.seek_to_first().unwrap();
+        }
     }
 
 }
