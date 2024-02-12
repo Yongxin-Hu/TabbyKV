@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use crate::engines::lsm::block::builder::BlockBuilder;
 use crate::engines::lsm::table::{BlockMeta, FileObject, SsTable};
 use anyhow::Result;
@@ -74,6 +74,8 @@ impl SsTableBuilder{
     ) -> Result<SsTable> {
         self.complete_block();
         let block_meta_offset = self.data.len();
+        BlockMeta::encode_to_buf(self.meta.as_slice(), &mut self.data);
+        self.data.put_u32(block_meta_offset as u32);
         let file = FileObject::create(path.as_ref(), self.data)?;
         Ok(SsTable{
             id,

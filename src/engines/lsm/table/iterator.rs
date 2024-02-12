@@ -30,7 +30,7 @@ impl SsTableIterator {
 
 
     fn seek_to_key_inner(table: &Arc<SsTable>, key: Bytes) -> Result<(usize, BlockIterator)> {
-        let mut block_idx = table.find_block_idx(key);
+        let mut block_idx = table.find_block_idx(key.clone());
         let mut block = table.read_block(block_idx)?;
         let mut block_iterator = BlockIterator::create_and_seek_to_key(block, key.as_ref());
         if !block_iterator.is_valid() {
@@ -75,7 +75,7 @@ impl StorageIterator for SsTableIterator {
         self.block_iterator.is_valid()
     }
 
-    fn next(&mut self) -> anyhow::Result<()> {
+    fn next(&mut self) -> Result<()> {
         if self.is_valid() {
             self.block_iterator.next();
             return Ok(());

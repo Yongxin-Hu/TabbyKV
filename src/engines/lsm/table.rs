@@ -16,7 +16,7 @@ use crate::engines::lsm::block::Block;
 use crate::engines::lsm::block::builder::BlockBuilder;
 
 // Block元信息
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct BlockMeta {
     pub offset: usize,
     pub first_key: Bytes,
@@ -105,9 +105,11 @@ pub struct SsTable {
 impl SsTable {
     // 打开一个 sstable
     pub fn open(id: usize, file: FileObject) -> Result<Self> {
-        let buf = file.read(0, file.1)?;
+        let len = file.size();
+        let block_meta_offset = (&file.read(len-4, 4).unwrap()[..]).get_u32() as u64;
+        let buf = file.read(block_meta_offset, file.1-block_meta_offset-4)?;
         let block_meta = BlockMeta::decode_from_buf(&buf)?;
-        let first_key = block_meta.get(0).unwrap().last_key.clone();
+        let first_key = block_meta.get(0).unwrap().first_key.clone();
         let last_key = block_meta.get(block_meta.len()-1).unwrap().last_key.clone();
         Ok(Self{
             file,
@@ -131,7 +133,7 @@ impl SsTable {
     // 找到一个可能包含key的Block
     pub fn find_block_idx(&self, key: Bytes) -> usize{
         self.block_meta
-            .partition_point(|meta| meta.first_key.as_key_slice() <= key)
+            .partition_point(|meta| meta.first_key <= key)
             .saturating_sub(1)
     }
 
@@ -159,7 +161,9 @@ impl SsTable {
 #[cfg(test)]
 mod test {
     use bytes::Bytes;
-    use crate::engines::lsm::table::BlockMeta;
+    use tempfile::{TempDir, tempdir};
+    use crate::engines::lsm::table::{BlockMeta, SsTable};
+    use crate::engines::lsm::table::builder::SsTableBuilder;
 
     #[test]
     fn test_block_meta() {
@@ -180,4 +184,50 @@ mod test {
         let result = BlockMeta::decode_from_buf(&mut buf).unwrap();
         assert_eq!(origin_block_meta, result)
     }
+
+    fn key_of(idx: usize) -> Bytes {
+        Bytes::copy_from_slice(format!("key_{:03}", idx * 5).as_bytes())
+    }
+
+    fn value_of(idx: usize) -> Vec<u8> {
+        format!("value_{:010}", idx).into_bytes()
+    }
+
+    fn num_of_keys() -> usize {
+        100
+    }
+
+    fn generate_sst() -> (TempDir, SsTable) {
+        let mut builder = SsTableBuilder::new(128);
+        for idx in 0..num_of_keys() {
+            let key = key_of(idx);
+            let value = value_of(idx);
+            builder.add(&key[..], &value[..]);
+        }
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("1.sst");
+        (dir, builder.build(0, path).unwrap())
+    }
+
+    #[test]
+    fn test_sst_build_all() {
+        generate_sst();
+    }
+
+    #[test]
+    fn test_sst_decode() {
+        let (_dir, sst) = generate_sst();
+        let meta = sst.block_meta.clone();
+        let new_sst = SsTable::open(0, sst.file).unwrap();
+        assert_eq!(new_sst.block_meta, meta);
+        assert_eq!(
+            new_sst.first_key(),
+            key_of(0)
+        );
+        assert_eq!(
+            new_sst.last_key(),
+            key_of(num_of_keys() - 1)
+        );
+    }
+
 }
