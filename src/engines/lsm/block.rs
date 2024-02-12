@@ -1,5 +1,5 @@
 pub(crate) mod builder;
-mod iterator;
+pub(crate) mod iterator;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 

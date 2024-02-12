@@ -2,6 +2,7 @@
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
 mod builder;
+mod iterator;
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -12,6 +13,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 use crate::engines::lsm::block::Block;
+use crate::engines::lsm::block::builder::BlockBuilder;
 
 // Block元信息
 #[derive(Debug, PartialEq)]
@@ -103,17 +105,34 @@ pub struct SsTable {
 impl SsTable {
     // 打开一个 sstable
     pub fn open(id: usize, file: FileObject) -> Result<Self> {
-        unimplemented!()
+        let buf = file.read(0, file.1)?;
+        let block_meta = BlockMeta::decode_from_buf(&buf)?;
+        let first_key = block_meta.get(0).unwrap().last_key.clone();
+        let last_key = block_meta.get(block_meta.len()-1).unwrap().last_key.clone();
+        Ok(Self{
+            file,
+            block_meta,
+            block_meta_offset: buf.len(),
+            id,
+            first_key,
+            last_key
+        })
     }
 
     // 获取 sstable 的第 index 个 Block
     pub fn read_block(&self, index: usize) -> Result<Arc<Block>> {
-        unimplemented!()
+        let offset = self.block_meta[index].offset as u64;
+        let offset_end = self.block_meta
+            .get(index+1).map_or(self.block_meta_offset, |x| x.offset) as u64;
+        let data = self.file.read(offset, offset_end-offset)?;
+        Ok(Arc::new(Block::decode(data.as_slice())))
     }
 
     // 找到一个可能包含key的Block
-    pub fn find_block_idx() -> usize{
-        unimplemented!()
+    pub fn find_block_idx(&self, key: Bytes) -> usize{
+        self.block_meta
+            .partition_point(|meta| meta.first_key.as_key_slice() <= key)
+            .saturating_sub(1)
     }
 
     pub fn num_of_blocks(&self) -> usize {
