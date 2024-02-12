@@ -35,7 +35,7 @@ impl SsTableIterator {
         let mut block_iterator = BlockIterator::create_and_seek_to_key(block, key.as_ref());
         if !block_iterator.is_valid() {
             block_idx += 1;
-            if block_idx <= table.num_of_blocks() {
+            if block_idx < table.num_of_blocks() {
                 block = table.read_block(block_idx)?;
                 block_iterator = BlockIterator::create_and_seek_to_key(block, key.as_ref());
             }

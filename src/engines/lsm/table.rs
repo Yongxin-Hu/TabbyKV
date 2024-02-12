@@ -266,4 +266,34 @@ mod test {
         }
     }
 
+    #[test]
+    fn test_sst_seek_key() {
+        let (_dir, sst) = generate_sst();
+        let sst = Arc::new(sst);
+        let mut iter = SsTableIterator::create_and_seek_to_key(sst, key_of(0)).unwrap();
+        for offset in 1..=5 {
+            for i in 0..num_of_keys() {
+                let key = iter.key();
+                let value = iter.value();
+                assert_eq!(
+                    key,
+                    key_of(i),
+                    "expected key: {:?}, actual key: {:?}",
+                    as_bytes(key_of(i).as_ref()),
+                    as_bytes(key.as_ref())
+                );
+                assert_eq!(
+                    value,
+                    value_of(i),
+                    "expected value: {:?}, actual value: {:?}",
+                    as_bytes(&value_of(i)),
+                    as_bytes(value)
+                );
+                iter.seek_to_key(Bytes::copy_from_slice(&format!("key_{:03}", i * 5 + offset).as_bytes())).unwrap();
+            }
+            iter.seek_to_key(Bytes::copy_from_slice(b"k"))
+                .unwrap();
+        }
+    }
+
 }
