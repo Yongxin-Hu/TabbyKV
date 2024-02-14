@@ -13,7 +13,6 @@ use std::sync::Arc;
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 use crate::engines::lsm::block::Block;
-use crate::engines::lsm::block::builder::BlockBuilder;
 
 // Block元信息
 #[derive(Clone, Debug, PartialEq)]

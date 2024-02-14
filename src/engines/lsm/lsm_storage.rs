@@ -12,7 +12,7 @@ use crate::engines::lsm::compact::{
 use anyhow::Result;
 use bytes::Bytes;
 use crate::engines::lsm::iterators::fused_iterator::FusedIterator;
-use crate::engines::lsm::iterators::LsmIterator;
+use crate::engines::lsm::iterators::lsm_iterator::LsmIterator;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 
 // LSM-tree 状态
@@ -229,10 +229,9 @@ mod test{
     use std::sync::Arc;
     use bytes::Bytes;
     use tempfile::tempdir;
-    use crate::engines::lsm::iterators::{LsmIterator, StorageIterator};
-    use crate::engines::lsm::iterators::fused_iterator::FusedIterator;
+    use crate::engines::lsm::iterators::StorageIterator;
     use crate::engines::lsm::lsm_storage::{LsmStorageInner, LsmStorageOptions};
-    use crate::engines::lsm::utils::{check_iter_result_by_key, check_lsm_iter_result_by_key};
+    use crate::engines::lsm::utils::check_lsm_iter_result_by_key;
 
     #[test]
     fn test_storage_integration() {
