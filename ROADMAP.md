@@ -3,7 +3,7 @@
 ## 存储引擎
 1. LSM-Tree 
 - memtable ✔
-- sstable ***WIP***
+- sstable ✔
 - compaction
 - manifest
 - WAL
