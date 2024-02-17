@@ -1,10 +1,8 @@
 use std::path::Path;
-use std::sync::Arc;
 use bytes::{BufMut, Bytes};
 use crate::engines::lsm::block::builder::BlockBuilder;
 use crate::engines::lsm::table::{BlockMeta, FileObject, SsTable};
 use anyhow::Result;
-use crate::engines::lsm::block::Block;
 
 pub struct SsTableBuilder {
     block_builder: BlockBuilder,

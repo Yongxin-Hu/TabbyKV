@@ -115,9 +115,10 @@ pub fn check_lsm_iter_result_by_key<I>(iter: &mut I, expected: Vec<(Bytes, Bytes
         assert_eq!(
             k,
             iter.key(),
-            "expected key: {:?}, actual key: {:?}",
+            "expected key: {:?}, actual key: {:?}, value:{:?}",
             k,
             as_bytes(iter.key()),
+            as_bytes(iter.value())
         );
         assert_eq!(
             v,

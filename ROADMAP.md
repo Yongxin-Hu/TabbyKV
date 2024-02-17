@@ -4,7 +4,7 @@
 1. LSM-Tree 
 - memtable ✔
 - sstable ✔
-- compaction
+- compaction ***WIP***
 - manifest
 - WAL
 2. Bitcask

@@ -1,9 +1,10 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
-mod builder;
-mod iterator;
+pub mod builder;
+pub mod iterator;
 
+use std::collections::Bound;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::windows::fs::FileExt;
@@ -13,6 +14,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 use crate::engines::lsm::block::Block;
+use crate::engines::lsm::table::iterator::SsTableIterator;
 
 // Block元信息
 #[derive(Clone, Debug, PartialEq)]

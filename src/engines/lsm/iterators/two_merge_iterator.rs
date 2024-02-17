@@ -28,7 +28,7 @@ impl <T: StorageIterator, E: StorageIterator> TwoMergeIterator<T, E>{
         Ok(())
     }
 
-    fn create(first: T, second: E) -> Result<Self>{
+    pub fn create(first: T, second: E) -> Result<Self>{
         let mut iter = Self{
             first,
             second,
@@ -66,7 +66,7 @@ for TwoMergeIterator<T, E> {
         }
     }
 
-    fn next(&mut self) -> anyhow::Result<()> {
+    fn next(&mut self) -> Result<()> {
         if self.use_first {
             self.first.next()?;
         } else {
