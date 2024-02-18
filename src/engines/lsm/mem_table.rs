@@ -8,6 +8,7 @@ use anyhow::Result;
 use crossbeam_skiplist::map::Entry;
 use ouroboros::self_referencing;
 use crate::engines::lsm::iterators::StorageIterator;
+use crate::engines::lsm::table::builder::SsTableBuilder;
 use crate::engines::lsm::utils::map_bound;
 
 pub struct MemTable {
@@ -42,6 +43,16 @@ impl MemTable {
         self.map.insert(Bytes::copy_from_slice(key),Bytes::copy_from_slice(value));
         self.approximate_size
             .fetch_add(estimated_size, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    // 将 memtable 中的 kv-pair 加入 ss_table_builder
+    pub fn flush(&self, ss_table_builder: &mut SsTableBuilder) -> Result<()> {
+        let mut iter = self.scan(Bound::Unbounded, Bound::Unbounded);
+        while iter.is_valid() {
+            ss_table_builder.add(iter.key(), iter.value());
+            iter.next()?;
+        }
         Ok(())
     }
 

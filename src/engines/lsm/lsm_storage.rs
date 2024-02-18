@@ -280,12 +280,14 @@ impl LsmStorageInner{
         Ok(())
     }
 
+    // freeze activate_memtable to readonly_memtable
     pub fn force_freeze_memtable(&self, state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
         //let mut guard = self.state.write();
         let memtable = Arc::new(MemTable::create(self.next_sst_id()));
         self.freeze_memtable_with_memtable(memtable)?;
         Ok(())
     }
+
 
     fn freeze_memtable_with_memtable(&self, memtable: Arc<MemTable>) -> Result<()> {
         let mut guard = self.state.write();
