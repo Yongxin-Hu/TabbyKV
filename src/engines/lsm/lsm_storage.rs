@@ -16,6 +16,7 @@ use crate::engines::lsm::iterators::lsm_iterator::LsmIterator;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 use crate::engines::lsm::iterators::StorageIterator;
 use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
+use crate::engines::lsm::table::builder::SsTableBuilder;
 use crate::engines::lsm::table::iterator::SsTableIterator;
 use crate::engines::lsm::utils::map_bound;
 
@@ -302,6 +303,32 @@ impl LsmStorageInner{
         drop(guard);
         //old_memtable.sync_wal()?;
 
+        Ok(())
+    }
+
+    // 强制将最早的 memtable 转入 L0 层
+    pub fn force_flush_earliest_memtable(&self) -> Result<()>{
+        let state_lock = self.state_lock.lock();
+        let earliest_memtable;
+        {
+            let guard = self.state.read();
+            earliest_memtable = guard.readonly_memtables
+                                .last()
+                                .expect("No readonly memtable!")
+                                .clone();
+        }
+        let mut ss_table_builder = SsTableBuilder::new(self.options.block_size);
+        earliest_memtable.flush(&mut ss_table_builder)?;
+        let sstable = Arc::new(ss_table_builder.build(earliest_memtable.id(), &self.path)?);
+        {
+            let mut guard = self.state.read();
+            let mut snapshot = guard.as_ref().clone();
+            let old_memtable = snapshot.readonly_memtables.pop().unwrap();
+            assert_eq!(old_memtable.id(), sstable.sst_id());
+            snapshot.l0_sstables.insert(0, sstable.sst_id());
+            snapshot.sstables.insert(sstable.sst_id(), sstable);
+            *guard = Arc::new(snapshot);
+        }
         Ok(())
     }
 }
