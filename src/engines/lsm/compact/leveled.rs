@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::engines::lsm::lsm_storage::LsmStorageState;
+use crate::engines::lsm::storage::state::LsmStorageState;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LeveledCompactionTask {

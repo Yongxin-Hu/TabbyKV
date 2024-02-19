@@ -1,6 +1,6 @@
 mod mem_table;
 mod wal;
-mod lsm_storage;
+mod storage;
 mod table;
 mod compact;
 mod iterators;

@@ -14,7 +14,8 @@ pub use simple_leveled::{
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, SimpleLeveledCompactionTask,
 };
 pub use tiered::{TieredCompactionController, TieredCompactionOptions, TieredCompactionTask};
-use crate::engines::lsm::lsm_storage::{LsmStorageInner, LsmStorageState};
+use crate::engines::lsm::storage::LsmStorageInner;
+use crate::engines::lsm::storage::state::LsmStorageState;
 use crate::engines::lsm::table::SsTable;
 
 #[derive(Debug, Serialize, Deserialize)]

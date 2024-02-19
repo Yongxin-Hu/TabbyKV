@@ -2,7 +2,7 @@ use std::collections::Bound;
 use anyhow::bail;
 use bytes::Bytes;
 use crate::engines::lsm::iterators::StorageIterator;
-use crate::engines::lsm::lsm_storage::LsmStorageInner;
+use crate::engines::lsm::storage::LsmStorageInner;
 
 pub(crate) fn map_bound(bound: Bound<&[u8]>) -> Bound<Bytes> {
     match bound {

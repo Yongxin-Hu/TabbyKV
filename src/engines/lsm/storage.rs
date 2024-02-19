@@ -1,16 +1,20 @@
-use std::collections::{Bound, HashMap};
+pub(crate) mod state;
+mod option;
+
+use std::collections::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 use crate::engines::lsm::mem_table::MemTable;
-use crate::engines::lsm::table::SsTable;
 use crate::engines::lsm::compact::{
-    CompactionController, CompactionOptions, LeveledCompactionController, LeveledCompactionOptions,
-    SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
+    CompactionController, CompactionOptions, LeveledCompactionController,
+    SimpleLeveledCompactionController, TieredCompactionController,
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use option::LsmStorageOptions;
+use state::LsmStorageState;
 use crate::engines::lsm::iterators::fused_iterator::FusedIterator;
 use crate::engines::lsm::iterators::lsm_iterator::LsmIterator;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
@@ -20,74 +24,6 @@ use crate::engines::lsm::table::builder::SsTableBuilder;
 use crate::engines::lsm::table::iterator::SsTableIterator;
 use crate::engines::lsm::utils::map_bound;
 
-// LSM-tree 状态
-#[derive(Clone)]
-pub struct LsmStorageState {
-    /// 当前活跃的 mem_table
-    pub active_memtable: Arc<MemTable>,
-    /// 只读的 mem_table
-    pub readonly_memtables: Vec<Arc<MemTable>>,
-    /// L0 layer sstables's id
-    pub l0_sstables: Vec<usize>,
-    /// L1 - Lmax layer sstables, (layer, Vec(sstable id))
-    pub levels: Vec<(usize, Vec<usize>)>,
-    /// SST objects.
-    pub sstables: HashMap<usize, Arc<SsTable>>,
-}
-
-impl LsmStorageState{
-    fn create(options: &LsmStorageOptions) -> Self {
-        let levels = match &options.compaction_options {
-            CompactionOptions::Leveled(LeveledCompactionOptions { max_levels, .. })
-            | CompactionOptions::Simple(SimpleLeveledCompactionOptions { max_levels, .. }) => (1
-                ..=*max_levels)
-                .map(|level| (level, Vec::new()))
-                .collect::<Vec<_>>(),
-            CompactionOptions::Tiered(_) => Vec::new(),
-            CompactionOptions::NoCompaction => vec![(1, Vec::new())],
-        };
-        Self {
-            active_memtable: Arc::new(MemTable::create(0)),
-            readonly_memtables: Vec::new(),
-            l0_sstables: Vec::new(),
-            levels,
-            sstables: Default::default(),
-        }
-    }
-}
-
-pub struct LsmStorageOptions {
-    // Block size in bytes
-    pub block_size: usize,
-    // SST size in bytes, also the approximate memtable capacity limit
-    pub target_sst_size: usize,
-    // Maximum number of memtables in memory, flush to L0 when exceeding this limit
-    pub num_memtable_limit: usize,
-    pub compaction_options: CompactionOptions,
-    pub enable_wal: bool,
-}
-
-impl LsmStorageOptions {
-    pub fn default_for_week1_test() -> Self {
-        Self {
-            block_size: 4096,
-            target_sst_size: 2 << 20,
-            compaction_options: CompactionOptions::NoCompaction,
-            enable_wal: false,
-            num_memtable_limit: 50,
-        }
-    }
-
-    pub fn default_for_week1_day6_test() -> Self {
-        Self {
-            block_size: 4096,
-            target_sst_size: 2 << 20,
-            compaction_options: CompactionOptions::NoCompaction,
-            enable_wal: false,
-            num_memtable_limit: 2,
-        }
-    }
-}
 /// The storage interface of the LSM tree.
 pub(crate) struct LsmStorageInner {
     pub(crate) state: Arc<RwLock<Arc<LsmStorageState>>>,
@@ -347,6 +283,11 @@ impl LsmStorageInner{
     }
 }
 
+struct LsmStorage{
+
+}
+
+
 #[cfg(test)]
 mod test{
     use std::collections::Bound;
@@ -355,7 +296,8 @@ mod test{
     use bytes::Bytes;
     use tempfile::tempdir;
     use crate::engines::lsm::iterators::StorageIterator;
-    use crate::engines::lsm::lsm_storage::{LsmStorageInner, LsmStorageOptions};
+    use crate::engines::lsm::storage::LsmStorageInner;
+    use crate::engines::lsm::storage::option::LsmStorageOptions;
     use crate::engines::lsm::table::builder::SsTableBuilder;
     use crate::engines::lsm::table::SsTable;
     use crate::engines::lsm::utils::{check_lsm_iter_result_by_key, sync};
