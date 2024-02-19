@@ -1,5 +1,6 @@
-# TabbyKV
-Tabby KV — Rust based KV Storage engine
+
+<img src="images/logo.png">
+
 
 ## Acknowledge
 [pingcap/talent-plan](https://github.com/pingcap/talent-plan)
