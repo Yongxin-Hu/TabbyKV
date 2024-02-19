@@ -1,8 +1,3 @@
-use std::sync::Arc;
-use anyhow::bail;
-use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
-use crate::engines::lsm::mem_table::MemTableIterator;
-
 pub mod merge_iterator;
 pub mod fused_iterator;
 pub mod two_merge_iterator;

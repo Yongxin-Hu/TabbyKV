@@ -130,10 +130,8 @@ impl <I: StorageIterator> StorageIterator for MergeIterator<I>{
 
 #[cfg(test)]
 mod test{
-    use anyhow::bail;
     use bytes::Bytes;
     use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
-    use crate::engines::lsm::iterators::StorageIterator;
     use crate::engines::lsm::utils::{check_iter_result_by_key, MockIterator};
 
     #[test]

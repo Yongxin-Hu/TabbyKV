@@ -2,6 +2,7 @@ use std::collections::Bound;
 use anyhow::bail;
 use bytes::Bytes;
 use crate::engines::lsm::iterators::StorageIterator;
+use crate::engines::lsm::lsm_storage::LsmStorageInner;
 
 pub(crate) fn map_bound(bound: Bound<&[u8]>) -> Bound<Bytes> {
     match bound {
@@ -130,4 +131,11 @@ pub fn check_lsm_iter_result_by_key<I>(iter: &mut I, expected: Vec<(Bytes, Bytes
         iter.next().unwrap();
     }
     assert!(!iter.is_valid());
+}
+
+pub fn sync(storage: &LsmStorageInner) {
+    storage
+        .force_freeze_memtable(&storage.state_lock.lock())
+        .unwrap();
+    storage.force_flush_earliest_memtable().unwrap();
 }

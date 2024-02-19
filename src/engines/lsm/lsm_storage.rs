@@ -9,7 +9,7 @@ use crate::engines::lsm::compact::{
     CompactionController, CompactionOptions, LeveledCompactionController, LeveledCompactionOptions,
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use crate::engines::lsm::iterators::fused_iterator::FusedIterator;
 use crate::engines::lsm::iterators::lsm_iterator::LsmIterator;
@@ -104,8 +104,13 @@ impl LsmStorageInner{
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
+    // TODO
     pub(crate) fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Self>{
         let path = path.as_ref();
+        if !path.exists() {
+            // 创建 kv 存储文件
+            std::fs::create_dir_all(path).context("failed to create kv store path.")?;
+        }
         let state = LsmStorageState::create(&options);
         let compaction_controller = match &options.compaction_options {
             CompactionOptions::Leveled(options) => {
@@ -160,7 +165,7 @@ impl LsmStorageInner{
                 Bytes::copy_from_slice(key)
             )?));
         }
-        let mut l0_sstable_iter = MergeIterator::create(l0_iter);
+        let l0_sstable_iter = MergeIterator::create(l0_iter);
         if l0_sstable_iter.is_valid() && l0_sstable_iter.key() == key && !l0_sstable_iter.value().is_empty() {
             return Ok(Some(Bytes::copy_from_slice(l0_sstable_iter.value())))
         }
@@ -306,6 +311,14 @@ impl LsmStorageInner{
         Ok(())
     }
 
+    pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
+        path.as_ref().join(format!("{:05}.sst", id))
+    }
+
+    fn path_of_sst(&self, id: usize) -> PathBuf{
+        Self::path_of_sst_static(&self.path, id)
+    }
+
     // 强制将最早的 memtable 转入 L0 层
     pub fn force_flush_earliest_memtable(&self) -> Result<()>{
         let state_lock = self.state_lock.lock();
@@ -319,9 +332,10 @@ impl LsmStorageInner{
         }
         let mut ss_table_builder = SsTableBuilder::new(self.options.block_size);
         earliest_memtable.flush(&mut ss_table_builder)?;
-        let sstable = Arc::new(ss_table_builder.build(earliest_memtable.id(), &self.path)?);
+        let sst_id = earliest_memtable.id();
+        let sstable = Arc::new(ss_table_builder.build(sst_id, self.path_of_sst(sst_id))?);
         {
-            let mut guard = self.state.read();
+            let mut guard = self.state.write();
             let mut snapshot = guard.as_ref().clone();
             let old_memtable = snapshot.readonly_memtables.pop().unwrap();
             assert_eq!(old_memtable.id(), sstable.sst_id());
@@ -344,7 +358,7 @@ mod test{
     use crate::engines::lsm::lsm_storage::{LsmStorageInner, LsmStorageOptions};
     use crate::engines::lsm::table::builder::SsTableBuilder;
     use crate::engines::lsm::table::SsTable;
-    use crate::engines::lsm::utils::check_lsm_iter_result_by_key;
+    use crate::engines::lsm::utils::{check_lsm_iter_result_by_key, sync};
 
     #[test]
     fn test_storage_integration() {
@@ -650,6 +664,113 @@ mod test{
         assert_eq!(storage.get(b"--").unwrap(), None);
         assert_eq!(storage.get(b"555").unwrap(), None);
     }
+
+    #[test]
+    fn test_task1_storage_scan() {
+        let dir = tempdir().unwrap();
+        let storage =
+            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
+        storage.put(b"0", b"2333333").unwrap();
+        storage.put(b"00", b"2333333").unwrap();
+        storage.put(b"4", b"23").unwrap();
+        sync(&storage);
+
+        storage.delete(b"4").unwrap();
+        sync(&storage);
+
+        storage.put(b"1", b"233").unwrap();
+        storage.put(b"2", b"2333").unwrap();
+        storage
+            .force_freeze_memtable(&storage.state_lock.lock())
+            .unwrap();
+        storage.put(b"00", b"2333").unwrap();
+        storage
+            .force_freeze_memtable(&storage.state_lock.lock())
+            .unwrap();
+        storage.put(b"3", b"23333").unwrap();
+        storage.delete(b"1").unwrap();
+
+        {
+            let state = storage.state.read();
+            assert_eq!(state.l0_sstables.len(), 2);
+            assert_eq!(state.readonly_memtables.len(), 2);
+        }
+
+        check_lsm_iter_result_by_key(
+            &mut storage.scan(Bound::Unbounded, Bound::Unbounded).unwrap(),
+            vec![
+                (Bytes::from("0"), Bytes::from("2333333")),
+                (Bytes::from("00"), Bytes::from("2333")),
+                (Bytes::from("2"), Bytes::from("2333")),
+                (Bytes::from("3"), Bytes::from("23333")),
+            ],
+        );
+        check_lsm_iter_result_by_key(
+            &mut storage
+                .scan(Bound::Included(b"1"), Bound::Included(b"2"))
+                .unwrap(),
+            vec![(Bytes::from("2"), Bytes::from("2333"))],
+        );
+        check_lsm_iter_result_by_key(
+            &mut storage
+                .scan(Bound::Excluded(b"1"), Bound::Excluded(b"3"))
+                .unwrap(),
+            vec![(Bytes::from("2"), Bytes::from("2333"))],
+        );
+    }
+
+    #[test]
+    fn test_task1_storage_get() {
+        let dir = tempdir().unwrap();
+        let storage =
+            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
+        storage.put(b"0", b"2333333").unwrap();
+        storage.put(b"00", b"2333333").unwrap();
+        storage.put(b"4", b"23").unwrap();
+        sync(&storage);
+
+        storage.delete(b"4").unwrap();
+        sync(&storage);
+
+        storage.put(b"1", b"233").unwrap();
+        storage.put(b"2", b"2333").unwrap();
+        storage
+            .force_freeze_memtable(&storage.state_lock.lock())
+            .unwrap();
+        storage.put(b"00", b"2333").unwrap();
+        storage
+            .force_freeze_memtable(&storage.state_lock.lock())
+            .unwrap();
+        storage.put(b"3", b"23333").unwrap();
+        storage.delete(b"1").unwrap();
+
+        {
+            let state = storage.state.read();
+            assert_eq!(state.l0_sstables.len(), 2);
+            assert_eq!(state.readonly_memtables.len(), 2);
+        }
+
+        assert_eq!(
+            storage.get(b"0").unwrap(),
+            Some(Bytes::from_static(b"2333333"))
+        );
+        assert_eq!(
+            storage.get(b"00").unwrap(),
+            Some(Bytes::from_static(b"2333"))
+        );
+        assert_eq!(
+            storage.get(b"2").unwrap(),
+            Some(Bytes::from_static(b"2333"))
+        );
+        assert_eq!(
+            storage.get(b"3").unwrap(),
+            Some(Bytes::from_static(b"23333"))
+        );
+        assert_eq!(storage.get(b"4").unwrap(), None);
+        assert_eq!(storage.get(b"--").unwrap(), None);
+        assert_eq!(storage.get(b"555").unwrap(), None);
+    }
+
 
 }
 

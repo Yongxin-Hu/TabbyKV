@@ -93,7 +93,7 @@ mod test {
 
     #[test]
     fn simple_test_sst_builder() {
-        let mut dir = tempdir().unwrap();
+        let dir = tempdir().unwrap();
         let mut sstable_builder = SsTableBuilder::new(16);
         sstable_builder.add(b"key1", b"value1");
         let path = dir.path().join("1.sst");
