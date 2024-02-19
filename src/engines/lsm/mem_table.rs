@@ -77,6 +77,10 @@ impl MemTable {
         self.approximate_size
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
 }
 
 type SkipMapRangeIter<'a> =

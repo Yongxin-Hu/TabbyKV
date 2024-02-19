@@ -2,6 +2,7 @@ pub(crate) mod state;
 mod option;
 
 use std::collections::Bound;
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -23,6 +24,98 @@ use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::engines::lsm::table::builder::SsTableBuilder;
 use crate::engines::lsm::table::iterator::SsTableIterator;
 use crate::engines::lsm::utils::map_bound;
+
+
+struct LsmStorage{
+    pub(crate) inner: Arc<LsmStorageInner>,
+    /// Notifies the L0 flush thread to stop working.
+    flush_notifier: crossbeam_channel::Sender<()>,
+    /// The handle for the compaction thread.
+    flush_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// Notifies the compaction thread to stop working.
+    compaction_notifier: crossbeam_channel::Sender<()>,
+    /// The handle for the compaction thread.
+    compaction_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+impl Drop for LsmStorage{
+    fn drop(&mut self) {
+        self.compaction_notifier.send(()).ok();
+        self.flush_notifier.send(()).unwrap();
+    }
+}
+
+impl LsmStorage{
+    pub fn close(&self) -> Result<()> {
+        self.inner.sync_dir()?;
+        // 停止 compaction 线程
+        self.compaction_notifier.send(()).unwrap();
+        // 停止 flush 线程
+        self.flush_notifier.send(()).unwrap();
+        // 等待 compaction 和 flush 线程完成
+        let mut flush_thread = self.flush_thread.lock();
+        if let Some(flush_thread) = flush_thread.take(){
+            flush_thread.join().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        }
+        let mut compaction_thread = self.compaction_thread.lock();
+        if let Some(compaction_thread) = compaction_thread.take(){
+            compaction_thread.join().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        }
+
+        if !self.inner.state.read().active_memtable.is_empty() {
+            self.inner
+                .freeze_memtable_with_memtable(Arc::new(MemTable::create(
+                    self.inner.next_sst_id(),
+                )))?;
+        }
+
+        while {
+            let snapshot = self.inner.state.read();
+            !snapshot.readonly_memtables.is_empty()
+        } {
+            self.inner.force_flush_earliest_memtable()?;
+        }
+
+        self.inner.sync_dir()?;
+
+        Ok(())
+    }
+
+    pub fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Arc<Self>> {
+        let inner = Arc::new(LsmStorageInner::open(path, options)?);
+        let (tx1, rx) = crossbeam_channel::unbounded();
+        let compaction_thread = inner.spawn_compaction_thread(rx)?;
+        let (tx2, rx) = crossbeam_channel::unbounded();
+        let flush_thread = inner.spawn_flush_thread(rx)?;
+        Ok(Arc::new(Self {
+            inner,
+            flush_notifier: tx2,
+            flush_thread: Mutex::new(flush_thread),
+            compaction_notifier: tx1,
+            compaction_thread: Mutex::new(compaction_thread),
+        }))
+    }
+
+    pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+        self.inner.get(key)
+    }
+
+    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        self.inner.put(key, value)
+    }
+
+    pub fn delete(&self, key: &[u8]) -> Result<()> {
+        self.inner.delete(key)
+    }
+
+    pub fn scan(
+        &self,
+        lower: Bound<&[u8]>,
+        upper: Bound<&[u8]>,
+    ) -> Result<FusedIterator<LsmIterator>> {
+        self.inner.scan(lower, upper)
+    }
+}
 
 /// The storage interface of the LSM tree.
 pub(crate) struct LsmStorageInner {
@@ -247,6 +340,11 @@ impl LsmStorageInner{
         Ok(())
     }
 
+    pub(super) fn sync_dir(&self) -> Result<()> {
+        File::open(&self.path)?.sync_all()?;
+        Ok(())
+    }
+
     pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
         path.as_ref().join(format!("{:05}.sst", id))
     }
@@ -283,20 +381,17 @@ impl LsmStorageInner{
     }
 }
 
-struct LsmStorage{
-
-}
-
 
 #[cfg(test)]
 mod test{
     use std::collections::Bound;
     use std::path::Path;
     use std::sync::Arc;
+    use std::time::Duration;
     use bytes::Bytes;
     use tempfile::tempdir;
     use crate::engines::lsm::iterators::StorageIterator;
-    use crate::engines::lsm::storage::LsmStorageInner;
+    use crate::engines::lsm::storage::{LsmStorage, LsmStorageInner};
     use crate::engines::lsm::storage::option::LsmStorageOptions;
     use crate::engines::lsm::table::builder::SsTableBuilder;
     use crate::engines::lsm::table::SsTable;
@@ -712,7 +807,24 @@ mod test{
         assert_eq!(storage.get(b"--").unwrap(), None);
         assert_eq!(storage.get(b"555").unwrap(), None);
     }
+    #[test]
+    fn test_task2_auto_flush() {
+        let dir = tempdir().unwrap();
+        let storage = LsmStorage::open(&dir, LsmStorageOptions::default_for_week1_day6_test()).unwrap();
 
+        let value = "1".repeat(1024); // 1KB
+
+        // approximately 6MB
+        for i in 0..6000 {
+            storage
+                .put(format!("{i}").as_bytes(), value.as_bytes())
+                .unwrap();
+        }
+
+        std::thread::sleep(Duration::from_millis(500));
+
+        assert!(!storage.inner.state.read().l0_sstables.is_empty());
+    }
 
 }
 
