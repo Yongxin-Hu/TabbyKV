@@ -133,6 +133,42 @@ impl LsmStorageInner{
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
+    // 检查是否 key 在[table_first_key, table_last_key]的范围内
+    fn check_key_in_range(
+        key:Bytes,
+        table_first_key: Bytes,
+        table_last_key: Bytes
+    ) -> bool{
+        key>=table_first_key && key <= table_last_key
+    }
+
+    fn check_range(
+        lower: Bound<&[u8]>,
+        upper: Bound<&[u8]>,
+        table_first_key: Bytes,
+        table_last_key: Bytes
+    ) -> bool{
+        match upper {
+            Bound::Excluded(key) if key <= table_first_key => {
+                return false;
+            },
+            Bound::Included(key) if key < table_first_key => {
+                return false;
+            },
+            _ => {}
+        }
+        match lower {
+            Bound::Excluded(key) if key >= table_last_key => {
+                return false;
+            },
+            Bound::Included(key) if key > table_last_key => {
+                return false;
+            },
+            _ => {}
+        }
+        true
+    }
+
     // TODO
     pub(crate) fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Self>{
         let path = path.as_ref();
@@ -189,10 +225,17 @@ impl LsmStorageInner{
         let mut l0_iter = Vec::with_capacity(snapshot.l0_sstables.len());
         for table_id in &snapshot.l0_sstables {
             let table = snapshot.sstables[table_id].clone();
-            l0_iter.push(Box::new(SsTableIterator::create_and_seek_to_key(
-                table,
-                Bytes::copy_from_slice(key)
-            )?));
+            // 跳过不含 key 的sstable
+            if Self::check_key_in_range(
+                Bytes::copy_from_slice(key),
+                table.first_key(),
+                table.last_key()
+            ){
+                l0_iter.push(Box::new(SsTableIterator::create_and_seek_to_key(
+                    table,
+                    Bytes::copy_from_slice(key)
+                )?));
+            }
         }
         let l0_sstable_iter = MergeIterator::create(l0_iter);
         if l0_sstable_iter.is_valid() && l0_sstable_iter.key() == key && !l0_sstable_iter.value().is_empty() {
@@ -229,32 +272,6 @@ impl LsmStorageInner{
         Ok(())
     }
 
-    fn check_range(
-        lower: Bound<&[u8]>,
-        upper: Bound<&[u8]>,
-        table_first_key: Bytes,
-        table_last_key: Bytes
-    ) -> bool{
-        match upper {
-            Bound::Excluded(key) if key <= table_first_key => {
-                return false;
-            },
-            Bound::Included(key) if key < table_first_key => {
-                return false;
-            },
-            _ => {}
-        }
-        match lower {
-            Bound::Excluded(key) if key >= table_last_key => {
-                return false;
-            },
-            Bound::Included(key) if key > table_last_key => {
-                return false;
-            },
-            _ => {}
-        }
-        true
-    }
 
 
     pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<FusedIterator<LsmIterator>>{
@@ -515,7 +532,6 @@ mod test{
                 &mut iter,
                 vec![
                     (Bytes::from_static(b"1"), Bytes::from_static(b"233333")),
-                    (Bytes::from_static(b"2"), Bytes::from_static(b"")),
                     (Bytes::from_static(b"3"), Bytes::from_static(b"233333")),
                     (Bytes::from_static(b"4"), Bytes::from_static(b"23333")),
                 ],
@@ -533,7 +549,6 @@ mod test{
             check_lsm_iter_result_by_key(
                 &mut iter,
                 vec![
-                    (Bytes::from_static(b"2"), Bytes::from_static(b"")),
                     (Bytes::from_static(b"3"), Bytes::from_static(b"233333"))
                 ],
             );

@@ -77,8 +77,8 @@ impl SsTableBuilder{
         let file = FileObject::create(path.as_ref(), self.data)?;
         Ok(SsTable{
             id,
-            first_key: self.first_key,
-            last_key: self.last_key,
+            first_key: self.meta.first().unwrap().first_key.clone(),
+            last_key: self.meta.last().unwrap().last_key.clone(),
             block_meta: self.meta,
             block_meta_offset,
             file,
