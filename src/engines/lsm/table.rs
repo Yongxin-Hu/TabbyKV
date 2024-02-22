@@ -113,7 +113,7 @@ impl SsTable {
         Ok(Self{
             file,
             block_meta,
-            block_meta_offset: buf.len(),
+            block_meta_offset: block_meta_offset as usize,
             id,
             first_key,
             last_key
