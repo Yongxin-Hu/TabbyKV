@@ -115,3 +115,27 @@ impl BloomFilter{
         })
     }
 }
+
+#[cfg(test)]
+mod test{
+    use crate::engines::lsm::table::bloom_filter::BloomFilter;
+
+    #[test]
+    fn test_bloom_filter(){
+        let mut bloom = BloomFilter::new();
+        bloom.add(b"key1");
+        bloom.add(b"key2");
+        assert!(bloom.may_contain(b"key1"));
+        assert!(bloom.may_contain(b"key2"));
+        assert!(!bloom.may_contain(b"key3"));
+        let mut buf = Vec::new();
+        bloom.encode(&mut buf);
+        let mut bloom2 = BloomFilter::decode(buf.as_slice()).unwrap();
+        assert_eq!(bloom, bloom2);
+        assert!(bloom2.may_contain(b"key1"));
+        assert!(bloom2.may_contain(b"key2"));
+        assert!(!bloom2.may_contain(b"key456"));
+        bloom2.add(b"key3");
+        assert!(bloom2.may_contain(b"key3"));
+    }
+}
