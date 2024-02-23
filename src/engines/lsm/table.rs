@@ -3,6 +3,7 @@
 
 pub mod builder;
 pub mod iterator;
+mod bloom_filter;
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -16,7 +17,7 @@ use crate::engines::lsm::block::Block;
 
 // Block元信息
 #[derive(Clone, Debug, PartialEq)]
-struct BlockMeta {
+pub struct BlockMeta {
     pub offset: usize,
     pub first_key: Bytes,
     pub last_key: Bytes

@@ -118,7 +118,7 @@ impl LsmStorage{
 }
 
 /// The storage interface of the LSM tree.
-pub(crate) struct LsmStorageInner {
+pub struct LsmStorageInner {
     pub(crate) state: Arc<RwLock<Arc<LsmStorageState>>>,
     pub(crate) state_lock: Mutex<()>,
     path: PathBuf,
