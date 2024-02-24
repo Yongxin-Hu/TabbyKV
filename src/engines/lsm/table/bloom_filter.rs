@@ -89,7 +89,7 @@ impl BloomFilter{
         true
     }
 
-    pub fn encode(&self, buf: &mut Vec<u8>) {
+    pub fn encode_to_buf(&self, buf: &mut Vec<u8>) {
         // 放置容量
         buf.put_u32(self.cap);
         // 放置哈希函数数量
@@ -98,7 +98,7 @@ impl BloomFilter{
         buf.extend_from_slice(self.bit_vec.clone().into_vec().as_slice());
     }
 
-    pub fn decode(buf: &[u8]) -> Result<Self> {
+    pub fn decode_from_buf(buf: &[u8]) -> Result<Self> {
         // 读取容量
         let cap: u32 = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
 
@@ -129,8 +129,8 @@ mod test{
         assert!(bloom.may_contain(b"key2"));
         assert!(!bloom.may_contain(b"key3"));
         let mut buf = Vec::new();
-        bloom.encode(&mut buf);
-        let mut bloom2 = BloomFilter::decode(buf.as_slice()).unwrap();
+        bloom.encode_to_buf(&mut buf);
+        let mut bloom2 = BloomFilter::decode_from_buf(buf.as_slice()).unwrap();
         assert_eq!(bloom, bloom2);
         assert!(bloom2.may_contain(b"key1"));
         assert!(bloom2.may_contain(b"key2"));

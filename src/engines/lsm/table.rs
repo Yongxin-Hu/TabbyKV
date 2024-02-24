@@ -14,6 +14,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 use crate::engines::lsm::block::Block;
+use crate::engines::lsm::table::bloom_filter::BloomFilter;
 
 // Block元信息
 #[derive(Clone, Debug, PartialEq)]
@@ -100,13 +101,21 @@ pub struct SsTable {
     id: usize,
     first_key: Bytes,
     last_key: Bytes,
+    bloom_filter: BloomFilter
 }
 
 impl SsTable {
     // 打开一个 sstable
     pub fn open(id: usize, file: FileObject) -> Result<Self> {
+        //                      SSTable 数据布局
+        // [   Block Section  ][        Meta Section         ]
+        // [block1, block2,...][[block_meta1, block_meta2,...],block_meta_offset(u32),bloom_filter, bloom_filter_offset(u32)]
         let len = file.size();
-        let block_meta_offset = (&file.read(len-4, 4).unwrap()[..]).get_u32() as u64;
+        let bloom_filter_offset = (&file.read(len-4, 4).unwrap()[..]).get_u32() as u64;
+
+        let buf = file.read(bloom_filter_offset, file.1-bloom_filter_offset-4)?;
+        let bloom_filter = BloomFilter::decode_from_buf(&buf)?;
+        let block_meta_offset = (&file.read(bloom_filter_offset-4, 4).unwrap()[..]).get_u32() as u64;
         let buf = file.read(block_meta_offset, file.1-block_meta_offset-4)?;
         let block_meta = BlockMeta::decode_from_buf(&buf)?;
         let first_key = block_meta.get(0).unwrap().first_key.clone();
@@ -117,7 +126,8 @@ impl SsTable {
             block_meta_offset: block_meta_offset as usize,
             id,
             first_key,
-            last_key
+            last_key,
+            bloom_filter
         })
     }
 

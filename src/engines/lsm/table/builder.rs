@@ -3,6 +3,7 @@ use bytes::{BufMut, Bytes};
 use crate::engines::lsm::block::builder::BlockBuilder;
 use crate::engines::lsm::table::{BlockMeta, FileObject, SsTable};
 use anyhow::Result;
+use crate::engines::lsm::table::bloom_filter::BloomFilter;
 
 pub struct SsTableBuilder {
     block_builder: BlockBuilder,
@@ -14,6 +15,7 @@ pub struct SsTableBuilder {
     // 保存每个block的元信息
     pub(crate) meta: Vec<BlockMeta>,
     block_size: usize,
+    bloom_filter: BloomFilter
 }
 
 
@@ -26,12 +28,16 @@ impl SsTableBuilder{
             last_key: Bytes::new(),
             data: Vec::new(),
             meta: Vec::new(),
-            block_size
+            block_size,
+            bloom_filter: BloomFilter::new()
         }
     }
 
     // 向 sstable 中添加 kv-pair (在 Block 满的时候新建 Block)
     pub fn add(&mut self, key: &[u8], value: &[u8]) {
+        // BloomFilter 记录 key
+        self.bloom_filter.add(key);
+
         if self.first_key.is_empty() {
             self.first_key = Bytes::copy_from_slice(key);
         }
@@ -40,6 +46,7 @@ impl SsTableBuilder{
             self.last_key = Bytes::copy_from_slice(key);
             return;
         }else{
+            // Block已满
             self.complete_block();
         }
 
@@ -71,9 +78,15 @@ impl SsTableBuilder{
         path: impl AsRef<Path>,
     ) -> Result<SsTable> {
         self.complete_block();
+        //                      SSTable 数据布局
+        // [   Block Section  ][        Meta Section         ]
+        // [block1, block2,...][[block_meta1, block_meta2,...],block_meta_offset(u32),bloom_filter, bloom_filter_offset(u32)]
         let block_meta_offset = self.data.len();
         BlockMeta::encode_to_buf(self.meta.as_slice(), &mut self.data);
         self.data.put_u32(block_meta_offset as u32);
+        let bloom_filter_offset = self.data.len();
+        self.bloom_filter.encode_to_buf(&mut self.data);
+        self.data.put_u32(bloom_filter_offset as u32);
         let file = FileObject::create(path.as_ref(), self.data)?;
         Ok(SsTable{
             id,
@@ -82,6 +95,7 @@ impl SsTableBuilder{
             block_meta: self.meta,
             block_meta_offset,
             file,
+            bloom_filter: self.bloom_filter
         })
     }
 }
