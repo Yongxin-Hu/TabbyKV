@@ -101,7 +101,7 @@ pub struct SsTable {
     id: usize,
     first_key: Bytes,
     last_key: Bytes,
-    bloom_filter: BloomFilter
+    pub(crate) bloom_filter: BloomFilter
 }
 
 impl SsTable {

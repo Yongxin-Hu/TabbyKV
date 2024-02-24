@@ -230,7 +230,7 @@ impl LsmStorageInner{
                 Bytes::copy_from_slice(key),
                 table.first_key(),
                 table.last_key()
-            ){
+            ) && table.bloom_filter.may_contain(key){
                 l0_iter.push(Box::new(SsTableIterator::create_and_seek_to_key(
                     table,
                     Bytes::copy_from_slice(key)
