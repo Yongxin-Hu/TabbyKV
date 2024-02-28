@@ -7,7 +7,6 @@ mod bloom_filter;
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::windows::fs::FileExt;
 use std::path::Path;
 use std::sync::Arc;
 
