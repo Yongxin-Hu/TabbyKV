@@ -1,11 +1,11 @@
 use crate::engines::lsm::compact::CompactionOptions;
 
 pub struct LsmStorageOptions {
-    // Block size in bytes
+    // Block 大小 (Byte)
     pub block_size: usize,
-    // SST size in bytes, also the approximate memtable capacity limit
+    // SST 文件大小 (Byte)，同时也是 memtable的大小
     pub target_sst_size: usize,
-    // Maximum number of memtables in memory, flush to L0 when exceeding this limit
+    // 内存中的 memtable 的数量限制(activate+read_only)
     pub num_memtable_limit: usize,
     pub compaction_options: CompactionOptions,
     pub enable_wal: bool,

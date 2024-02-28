@@ -140,7 +140,7 @@ impl SsTable {
         Ok(Arc::new(Block::decode(data.as_slice())))
     }
 
-    // 找到一个可能包含key的Block
+    // 找到一个可能包含 key 的 Block
     pub fn find_block_idx(&self, key: Bytes) -> usize{
         self.block_meta
             .partition_point(|meta| meta.first_key <= key)

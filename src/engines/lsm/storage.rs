@@ -40,6 +40,7 @@ struct LsmStorage{
 
 impl Drop for LsmStorage{
     fn drop(&mut self) {
+        // 停止 flush_thread 以及 compaction_thread
         self.compaction_notifier.send(()).ok();
         self.flush_notifier.send(()).unwrap();
     }
@@ -343,12 +344,13 @@ impl LsmStorageInner{
 
     fn freeze_memtable_with_memtable(&self, memtable: Arc<MemTable>) -> Result<()> {
         let mut guard = self.state.write();
-        // Swap the current memtable with a new one.
+
         let mut snapshot = guard.as_ref().clone();
+        // 使用 memtable 来更换当前的 active_memtable
         let old_memtable = std::mem::replace(&mut snapshot.active_memtable, memtable);
-        // Add the memtable to the immutable memtables.
+        // 将 old_memtable 加入 readonly_memtables
         snapshot.readonly_memtables.insert(0, old_memtable.clone());
-        // Update the snapshot.
+        // 更新 state
         *guard = Arc::new(snapshot);
 
         drop(guard);
@@ -366,7 +368,7 @@ impl LsmStorageInner{
         path.as_ref().join(format!("{:05}.sst", id))
     }
 
-    fn path_of_sst(&self, id: usize) -> PathBuf{
+    pub(crate) fn path_of_sst(&self, id: usize) -> PathBuf{
         Self::path_of_sst_static(&self.path, id)
     }
 
