@@ -1,8 +1,11 @@
 use std::collections::Bound;
 use anyhow::bail;
 use bytes::Bytes;
+use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 use crate::engines::lsm::iterators::StorageIterator;
 use crate::engines::lsm::storage::LsmStorageInner;
+use crate::engines::lsm::storage::state::LsmStorageState;
+use crate::engines::lsm::table::iterator::SsTableIterator;
 
 pub(crate) fn map_bound(bound: Bound<&[u8]>) -> Bound<Bytes> {
     match bound {
@@ -138,4 +141,25 @@ pub fn sync(storage: &LsmStorageInner) {
         .force_freeze_memtable(&storage.state_lock.lock())
         .unwrap();
     storage.force_flush_earliest_memtable().unwrap();
+}
+
+pub fn construct_merge_iterator_over_storage(
+    state: &LsmStorageState,
+) -> MergeIterator<SsTableIterator> {
+    let mut iters = Vec::new();
+    for t in &state.l0_sstables {
+        iters.push(Box::new(
+            SsTableIterator::create_and_seek_to_first(state.sstables.get(t).cloned().unwrap())
+                .unwrap(),
+        ));
+    }
+    for (_, files) in &state.levels {
+        for f in files {
+            iters.push(Box::new(
+                SsTableIterator::create_and_seek_to_first(state.sstables.get(f).cloned().unwrap())
+                    .unwrap(),
+            ));
+        }
+    }
+    MergeIterator::create(iters)
 }

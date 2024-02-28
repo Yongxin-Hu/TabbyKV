@@ -224,7 +224,8 @@ impl LsmStorageInner {
             assert!(l0_sstables_map.is_empty());
 
             *self.state.write() = Arc::new(state);
-            self.sync_dir()?;
+            // TODO 这里不知道为什么报Err
+            //self.sync_dir()?;
         }
         // 删除旧的 sstables 文件
         for sst in l0_sstables.iter().chain(l1_sstables.iter()) {

@@ -274,7 +274,6 @@ impl LsmStorageInner{
     }
 
 
-
     pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<FusedIterator<LsmIterator>>{
         let snapshot = {
             let guard = self.state.read();
@@ -414,7 +413,7 @@ mod test{
     use crate::engines::lsm::storage::option::LsmStorageOptions;
     use crate::engines::lsm::table::builder::SsTableBuilder;
     use crate::engines::lsm::table::SsTable;
-    use crate::engines::lsm::utils::{check_lsm_iter_result_by_key, sync};
+    use crate::engines::lsm::utils::{check_iter_result_by_key, check_lsm_iter_result_by_key, construct_merge_iterator_over_storage, sync};
 
     #[test]
     fn test_storage_integration() {
@@ -843,5 +842,61 @@ mod test{
         assert!(!storage.inner.state.read().l0_sstables.is_empty());
     }
 
+    #[test]
+    fn test_full_compaction() {
+        let dir = tempdir().unwrap();
+        let storage =
+            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
+        storage.put(b"0", b"v1").unwrap();
+        sync(&storage);
+        storage.put(b"0", b"v2").unwrap();
+        storage.put(b"1", b"v2").unwrap();
+        storage.put(b"2", b"v2").unwrap();
+        sync(&storage);
+        storage.delete(b"0").unwrap();
+        storage.delete(b"2").unwrap();
+        sync(&storage);
+        assert_eq!(storage.state.read().l0_sstables.len(), 3);
+        let mut iter = construct_merge_iterator_over_storage(&storage.state.read());
+        check_iter_result_by_key(
+            &mut iter,
+            vec![
+                (Bytes::from_static(b"0"), Bytes::from_static(b"")),
+                (Bytes::from_static(b"1"), Bytes::from_static(b"v2")),
+                (Bytes::from_static(b"2"), Bytes::from_static(b"")),
+            ],
+        );
+        storage.force_full_compaction().unwrap();
+        assert!(storage.state.read().l0_sstables.is_empty());
+        let mut iter = construct_merge_iterator_over_storage(&storage.state.read());
+        check_iter_result_by_key(
+            &mut iter,
+            vec![(Bytes::from_static(b"1"), Bytes::from_static(b"v2"))],
+        );
+        storage.put(b"0", b"v3").unwrap();
+        storage.put(b"2", b"v3").unwrap();
+        sync(&storage);
+        storage.delete(b"1").unwrap();
+        sync(&storage);
+        let mut iter = construct_merge_iterator_over_storage(&storage.state.read());
+        check_iter_result_by_key(
+            &mut iter,
+            vec![
+                (Bytes::from_static(b"0"), Bytes::from_static(b"v3")),
+                (Bytes::from_static(b"1"), Bytes::from_static(b"")),
+                (Bytes::from_static(b"2"), Bytes::from_static(b"v3")),
+            ],
+        );
+        storage.force_full_compaction().unwrap();
+        assert!(storage.state.read().l0_sstables.is_empty());
+        let mut iter = construct_merge_iterator_over_storage(&storage.state.read());
+        check_iter_result_by_key(
+            &mut iter,
+            vec![
+                (Bytes::from_static(b"0"), Bytes::from_static(b"v3")),
+                (Bytes::from_static(b"2"), Bytes::from_static(b"v3")),
+            ],
+        );
+    }
 }
 
