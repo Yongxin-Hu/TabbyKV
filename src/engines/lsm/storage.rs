@@ -16,6 +16,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use option::LsmStorageOptions;
 use state::LsmStorageState;
+use crate::engines::lsm::iterators::concat_iterator::SstConcatIterator;
 use crate::engines::lsm::iterators::fused_iterator::FusedIterator;
 use crate::engines::lsm::iterators::lsm_iterator::LsmIterator;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
@@ -239,9 +240,22 @@ impl LsmStorageInner{
             }
         }
         let l0_sstable_iter = MergeIterator::create(l0_iter);
-        if l0_sstable_iter.is_valid() && l0_sstable_iter.key() == key && !l0_sstable_iter.value().is_empty() {
-            return Ok(Some(Bytes::copy_from_slice(l0_sstable_iter.value())))
+        let mut level_iters = Vec::with_capacity(snapshot.levels.len());
+        for (_, level_sst_id) in &snapshot.levels{
+            let mut level_sst = Vec::with_capacity(level_sst_id.len());
+            for sst_id in level_sst_id {
+                let table = snapshot.sstables[sst_id].clone();
+                level_sst.push(table);
+            }
+            let iter = SstConcatIterator::create_and_seek_to_key(
+                level_sst, Bytes::copy_from_slice(key))?;
+            level_iters.push(Box::new(iter))
         }
+        let iter = TwoMergeIterator::create(l0_sstable_iter, MergeIterator::create(level_iters))?;
+        if iter.is_valid() && iter.key() == key && !iter.value().is_empty() {
+            return Ok(Some(Bytes::copy_from_slice(iter.value())))
+        }
+
         Ok(None)
     }
 
@@ -316,7 +330,38 @@ impl LsmStorageInner{
         }
         let l0_sstable_iters = MergeIterator::create(iters);
         let end_bound = map_bound(upper);
-        Ok(FusedIterator::new(LsmIterator::new(TwoMergeIterator::create(mem_table_iters, l0_sstable_iters)?, end_bound)?))
+        let mut level_iters = Vec::with_capacity(snapshot.levels.len());
+        for (_, level_sst_ids) in &snapshot.levels {
+            let mut level_ssts = Vec::with_capacity(level_sst_ids.len());
+            for sst_id in level_sst_ids{
+                let table = snapshot.sstables[sst_id].clone();
+                if Self::check_range(
+                    lower,
+                    upper,
+                    table.first_key(),
+                    table.last_key()
+                ){
+                    level_ssts.push(table);
+                }
+            }
+
+            let level_iter = match lower{
+                Bound::Included(key) => SstConcatIterator::create_and_seek_to_key(level_ssts, Bytes::copy_from_slice(key))?,
+                Bound::Excluded(key) => {
+                    let mut iter = SstConcatIterator::create_and_seek_to_key(level_ssts, Bytes::copy_from_slice(key))?;
+                    if iter.is_valid() && iter.key() == key{
+                        iter.next()?;
+                    }
+                    iter
+                },
+                Bound::Unbounded => SstConcatIterator::create_and_seek_to_first(level_ssts)?
+            };
+            level_iters.push(Box::new(level_iter));
+        }
+        let mem_and_l0_iter = TwoMergeIterator::create(mem_table_iters, l0_sstable_iters)?;
+        let level_merge_iter = MergeIterator::create(level_iters);
+        let iters = LsmIterator::new(TwoMergeIterator::create(mem_and_l0_iter, level_merge_iter)?, end_bound)?;
+        Ok(FusedIterator::new(iters))
     }
 
     fn try_freeze(&self, estimated_size: usize) -> Result<()> {
@@ -408,6 +453,7 @@ mod test{
     use std::time::Duration;
     use bytes::Bytes;
     use tempfile::tempdir;
+    use crate::engines::lsm::iterators::concat_iterator::SstConcatIterator;
     use crate::engines::lsm::iterators::StorageIterator;
     use crate::engines::lsm::storage::{LsmStorage, LsmStorageInner};
     use crate::engines::lsm::storage::option::LsmStorageOptions;
@@ -603,7 +649,7 @@ mod test{
     }
 
     #[test]
-    fn test_task2_storage_scan() {
+    fn test_storage_scan() {
         let dir = tempdir().unwrap();
         let storage =
             Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
@@ -662,7 +708,7 @@ mod test{
     }
 
     #[test]
-    fn test_task3_storage_get() {
+    fn test_storage_get_1() {
         let dir = tempdir().unwrap();
         let storage =
             Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
@@ -719,7 +765,7 @@ mod test{
     }
 
     #[test]
-    fn test_task1_storage_scan() {
+    fn test_storage_scan_2() {
         let dir = tempdir().unwrap();
         let storage =
             Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
@@ -773,7 +819,7 @@ mod test{
     }
 
     #[test]
-    fn test_task1_storage_get() {
+    fn test_storage_get_2() {
         let dir = tempdir().unwrap();
         let storage =
             Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
@@ -824,7 +870,7 @@ mod test{
         assert_eq!(storage.get(b"555").unwrap(), None);
     }
     #[test]
-    fn test_task2_auto_flush() {
+    fn test_auto_flush() {
         let dir = tempdir().unwrap();
         let storage = LsmStorage::open(&dir, LsmStorageOptions::default_for_week1_day6_test()).unwrap();
 
@@ -898,5 +944,120 @@ mod test{
             ],
         );
     }
+
+    fn generate_concat_sst(
+        start_key: usize,
+        end_key: usize,
+        dir: impl AsRef<Path>,
+        id: usize,
+    ) -> SsTable {
+        let mut builder = SsTableBuilder::new(128);
+        for idx in start_key..end_key {
+            let key = format!("{:05}", idx);
+            builder.add(
+                key.as_bytes(),
+                b"test",
+            );
+        }
+        let path = dir.as_ref().join(format!("{id}.sst"));
+        builder.build(0, path).unwrap()
+    }
+
+    #[test]
+    fn test_concat_iterator() {
+        let dir = tempdir().unwrap();
+        let mut sstables = Vec::new();
+        for i in 1..=10 {
+            sstables.push(Arc::new(generate_concat_sst(
+                i * 10,
+                (i + 1) * 10,
+                dir.path(),
+                i,
+            )));
+        }
+        for key in 0..120 {
+            let iter = SstConcatIterator::create_and_seek_to_key(
+                sstables.clone(),
+                Bytes::copy_from_slice(format!("{:05}", key).as_bytes()),
+            ).unwrap();
+            if key < 10 {
+                assert!(iter.is_valid());
+                assert_eq!(iter.key(), b"00010");
+            } else if key >= 110 {
+                assert!(!iter.is_valid());
+            } else {
+                assert!(iter.is_valid());
+                assert_eq!(
+                    iter.key(),
+                    format!("{:05}", key).as_bytes()
+                );
+            }
+        }
+        let iter = SstConcatIterator::create_and_seek_to_first(sstables.clone()).unwrap();
+        assert!(iter.is_valid());
+        assert_eq!(iter.key(), b"00010");
+    }
+
+    #[test]
+    fn test_integration_3() {
+        let dir = tempdir().unwrap();
+        let storage =
+            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
+        storage.put(b"0", b"2333333").unwrap();
+        storage.put(b"00", b"2333333").unwrap();
+        storage.put(b"4", b"23").unwrap();
+        sync(&storage);
+
+        storage.delete(b"4").unwrap();
+        sync(&storage);
+
+        storage.force_full_compaction().unwrap();
+        assert!(storage.state.read().l0_sstables.is_empty());
+        assert!(!storage.state.read().levels[0].1.is_empty());
+
+        storage.put(b"1", b"233").unwrap();
+        storage.put(b"2", b"2333").unwrap();
+        sync(&storage);
+
+        storage.put(b"00", b"2333").unwrap();
+        storage.put(b"3", b"23333").unwrap();
+        storage.delete(b"1").unwrap();
+        sync(&storage);
+        storage.force_full_compaction().unwrap();
+
+        assert!(storage.state.read().l0_sstables.is_empty());
+        assert!(!storage.state.read().levels[0].1.is_empty());
+
+        check_lsm_iter_result_by_key(
+            &mut storage.scan(Bound::Unbounded, Bound::Unbounded).unwrap(),
+            vec![
+                (Bytes::from("0"), Bytes::from("2333333")),
+                (Bytes::from("00"), Bytes::from("2333")),
+                (Bytes::from("2"), Bytes::from("2333")),
+                (Bytes::from("3"), Bytes::from("23333")),
+            ],
+        );
+
+        assert_eq!(
+            storage.get(b"0").unwrap(),
+            Some(Bytes::from_static(b"2333333"))
+        );
+        assert_eq!(
+            storage.get(b"00").unwrap(),
+            Some(Bytes::from_static(b"2333"))
+        );
+        assert_eq!(
+            storage.get(b"2").unwrap(),
+            Some(Bytes::from_static(b"2333"))
+        );
+        assert_eq!(
+            storage.get(b"3").unwrap(),
+            Some(Bytes::from_static(b"23333"))
+        );
+        assert_eq!(storage.get(b"4").unwrap(), None);
+        assert_eq!(storage.get(b"--").unwrap(), None);
+        assert_eq!(storage.get(b"555").unwrap(), None);
+    }
+
 }
 

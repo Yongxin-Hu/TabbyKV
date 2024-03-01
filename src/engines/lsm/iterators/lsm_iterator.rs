@@ -6,8 +6,12 @@ use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::engines::lsm::mem_table::MemTableIterator;
 use crate::engines::lsm::table::iterator::SsTableIterator;
 use anyhow::Result;
+use crate::engines::lsm::iterators::concat_iterator::SstConcatIterator;
 
-type LsmIteratorInner = TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>;
+type LsmIteratorInner = TwoMergeIterator<
+    TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>,
+    MergeIterator<SstConcatIterator>>;
+
 
 pub struct LsmIterator {
     inner: LsmIteratorInner,

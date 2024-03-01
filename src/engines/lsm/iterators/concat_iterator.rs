@@ -38,7 +38,7 @@ impl SstConcatIterator {
                 current: Some(SsTableIterator::create_and_seek_to_first(sstables[0].clone())?),
                 next_sst_idx: 1,
                 sstables
-            };
+        };
         iter.move_to_valid()?;
         Ok(iter)
     }
