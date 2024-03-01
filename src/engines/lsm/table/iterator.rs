@@ -12,6 +12,7 @@ pub struct SsTableIterator {
 }
 
 impl SsTableIterator {
+    // 创建并且定位到第一个 Block
     pub fn create_and_seek_to_first(table: Arc<SsTable>) -> Result<Self>{
         let first_block = table.read_block(0)?;
         Ok(SsTableIterator{
@@ -21,13 +22,13 @@ impl SsTableIterator {
         })
     }
 
+    // 定位到第一个 Block
     pub fn seek_to_first(&mut self) -> Result<()> {
         let first_block = self.table.read_block(0)?;
         self.block_index = 0;
         self.block_iterator = BlockIterator::create_and_seek_to_first(first_block);
         Ok(())
     }
-
 
     fn seek_to_key_inner(table: &Arc<SsTable>, key: Bytes) -> Result<(usize, BlockIterator)> {
         let mut block_idx = table.find_block_idx(key.clone());

@@ -15,8 +15,10 @@ pub use simple_leveled::{
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, SimpleLeveledCompactionTask,
 };
 pub use tiered::{TieredCompactionController, TieredCompactionOptions, TieredCompactionTask};
+use crate::engines::lsm::iterators::concat_iterator::SstConcatIterator;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 use crate::engines::lsm::iterators::StorageIterator;
+use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::engines::lsm::storage::LsmStorageInner;
 use crate::engines::lsm::storage::state::LsmStorageState;
 use crate::engines::lsm::table::builder::SsTableBuilder;
@@ -113,7 +115,9 @@ pub enum CompactionOptions {
 
 impl LsmStorageInner {
 
-    fn compact_sst_by_merge_iter(&self, mut iter: MergeIterator<SsTableIterator>) -> Result<Vec<Arc<SsTable>>> {
+    fn compact_sst_by_merge_iter<I>(&self, mut iter: I) -> Result<Vec<Arc<SsTable>>>
+    where I: StorageIterator
+    {
         let mut sst_builder = None;
         let mut sst = Vec::new();
 
@@ -159,19 +163,20 @@ impl LsmStorageInner {
                 l0_sstables,
                 l1_sstables
             } => {
-                let mut iters = Vec::with_capacity(l0_sstables.len() + l1_sstables.len());
+                let mut l0_iters = Vec::with_capacity(l0_sstables.len());
                 for sst_id in l0_sstables{
-                    iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
+                    l0_iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
                         snapshot.sstables.get(sst_id).unwrap().clone(),
                     )?));
                 }
+                let mut l1_iters = Vec::with_capacity(l1_sstables.len());
                 for sst_id in l1_sstables{
-                    iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
-                        snapshot.sstables.get(sst_id).unwrap().clone(),
-                    )?));
+                    l1_iters.push(snapshot.sstables.get(sst_id).unwrap().clone());
                 }
-                let merge_iters = MergeIterator::create(iters);
-                self.compact_sst_by_merge_iter(merge_iters)
+                // 由于 L1 层 sstable 的 Key 已经没有重叠了，使用 SstConcatIterator 来减少不必要的 read_block
+                let iters = TwoMergeIterator::create(
+                    MergeIterator::create(l0_iters), SstConcatIterator::create_and_seek_to_first(l1_iters)?)?;
+                self.compact_sst_by_merge_iter(iters)
             },
             _ => {Ok(vec![])}
         }

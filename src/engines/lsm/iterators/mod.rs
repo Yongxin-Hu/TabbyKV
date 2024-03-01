@@ -2,7 +2,7 @@ pub mod merge_iterator;
 pub mod fused_iterator;
 pub mod two_merge_iterator;
 pub mod lsm_iterator;
-mod concat_iterator;
+pub mod concat_iterator;
 
 pub trait StorageIterator {
     /// 获取当前 value

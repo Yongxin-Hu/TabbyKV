@@ -135,6 +135,7 @@ impl SsTable {
         let offset = self.block_meta[index].offset as u64;
         let offset_end = self.block_meta
             .get(index+1).map_or(self.block_meta_offset, |x| x.offset) as u64;
+        // 此处有一个对文件的 IO
         let data = self.file.read(offset, offset_end-offset)?;
         Ok(Arc::new(Block::decode(data.as_slice())))
     }
@@ -146,6 +147,7 @@ impl SsTable {
             .saturating_sub(1)
     }
 
+    // SsTable 中 Block 的数量
     pub fn num_of_blocks(&self) -> usize {
         self.block_meta.len()
     }
