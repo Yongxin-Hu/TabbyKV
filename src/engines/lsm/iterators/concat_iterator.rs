@@ -38,7 +38,7 @@ impl SstConcatIterator {
                 current: Some(SsTableIterator::create_and_seek_to_first(sstables[0].clone())?),
                 next_sst_idx: 1,
                 sstables
-            }?;
+            };
         iter.move_to_valid()?;
         Ok(iter)
     }
@@ -46,7 +46,7 @@ impl SstConcatIterator {
     pub fn create_and_seek_to_key(sstables: Vec<Arc<SsTable>>, key: Bytes) -> Result<Self> {
         Self::check_sst_valid(&sstables);
         let idx: usize = sstables
-            .partition_point(|table| table.first_key().as_key_slice() <= key)
+            .partition_point(|table| table.first_key() <= key)
             .saturating_sub(1);
         if idx >= sstables.len() {
             return Ok(Self {
@@ -105,7 +105,7 @@ impl StorageIterator for SstConcatIterator{
 
     fn next(&mut self) -> Result<()> {
         self.current.as_mut().unwrap().next()?;
-        self.move_until_valid()?;
+        self.move_to_valid()?;
         Ok(())
     }
 }
