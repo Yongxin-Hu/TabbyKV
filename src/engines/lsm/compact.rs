@@ -109,7 +109,7 @@ pub enum CompactionOptions {
     Tiered(TieredCompactionOptions),
     /// Simple leveled compaction
     Simple(SimpleLeveledCompactionOptions),
-    /// In no compaction mode (week 1), always flush to L0
+    /// 仅 flush 到 L0 层
     NoCompaction,
 }
 

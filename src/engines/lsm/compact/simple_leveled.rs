@@ -4,6 +4,7 @@ use crate::engines::lsm::storage::state::LsmStorageState;
 
 #[derive(Debug, Clone)]
 pub struct SimpleLeveledCompactionOptions {
+    // （低一层的文件数量 / 高一层的文件数量）
     pub size_ratio_percent: usize,
     pub level0_file_num_compaction_trigger: usize,
     pub max_levels: usize,
@@ -33,9 +34,38 @@ impl SimpleLeveledCompactionController {
     /// Returns `None` if no compaction needs to be scheduled. The order of SSTs in the compaction task id vector matters.
     pub fn generate_compaction_task(
         &self,
-        _snapshot: &LsmStorageState,
+        snapshot: &LsmStorageState,
     ) -> Option<SimpleLeveledCompactionTask> {
-        unimplemented!()
+        // 记录每一层的 sst 文件数量
+        let mut layer_size = Vec::with_capacity(snapshot.levels.len() + 1);
+        layer_size.push(snapshot.l0_sstables.len());
+        for (_, level_sst_id) in &snapshot.levels{
+            layer_size.push(level_sst_id.len());
+        }
+
+        for layer in 0..self.options.max_levels {
+            // L0 层需要达到 level0_file_num_compaction_trigger
+            if layer == 0 && layer_size[layer] < self.options.level0_file_num_compaction_trigger{
+                continue;
+            }
+
+            let lower_layer = layer + 1;
+            let ratio = layer_size[lower_layer] as f64 / layer_size[layer] as f64;
+            if ratio < self.options.size_ratio_percent as f64 / 100.0 {
+                return Some(SimpleLeveledCompactionTask {
+                    upper_level: if layer == 0 { None } else { Some(i) },
+                    upper_level_sst_ids: if layer == 0 {
+                        snapshot.l0_sstables.clone()
+                    } else {
+                        snapshot.levels[layer - 1].1.clone()
+                    },
+                    lower_level,
+                    lower_level_sst_ids: snapshot.levels[lower_layer - 1].1.clone(),
+                    is_lower_level_bottom_level: lower_layer == self.options.max_levels,
+                });
+            }
+        }
+        None
     }
 
     /// Apply the compaction result.

@@ -12,14 +12,19 @@ use crate::engines::lsm::table::builder::SsTableBuilder;
 use crate::engines::lsm::utils::map_bound;
 
 pub struct MemTable {
+    // 实际存储 KV-pair 的 SkipMap
+    // TODO 用自己写的 SkipMap 替换
     map: Arc<SkipMap<Bytes, Bytes>>,
+    // WAL 预写日志
     wal: Option<Wal>,
     id: usize,
+    // mem_table 预估大小
     approximate_size: Arc<AtomicUsize>,
 }
 
 impl MemTable {
     /// 创建新的 mem_table
+    /// mem_table的`id`是 LSMStorageInner 中原子性递增的 next_sst_id
     pub fn create(id: usize) -> Self {
         MemTable {
             map: Arc::new(SkipMap::new()),
@@ -37,7 +42,7 @@ impl MemTable {
         }
     }
 
-    /// 将 KV对 放入mem_table
+    /// 将 KV-pair 放入 mem_table
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
         let estimated_size = key.len() + value.len();
         self.map.insert(Bytes::copy_from_slice(key),Bytes::copy_from_slice(value));
