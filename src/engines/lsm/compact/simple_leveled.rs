@@ -52,13 +52,13 @@ impl SimpleLeveledCompactionController {
             let ratio = layer_size[lower_layer] as f64 / layer_size[layer] as f64;
             if ratio < self.options.size_ratio_percent as f64 / 100.0 {
                 return Some(SimpleLeveledCompactionTask {
-                    upper_level: if layer == 0 { None } else { Some(i) },
+                    upper_level: if layer == 0 { None } else { Some(layer) },
                     upper_level_sst_ids: if layer == 0 {
                         snapshot.l0_sstables.clone()
                     } else {
                         snapshot.levels[layer - 1].1.clone()
                     },
-                    lower_level,
+                    lower_level: lower_layer,
                     lower_level_sst_ids: snapshot.levels[lower_layer - 1].1.clone(),
                     is_lower_level_bottom_level: lower_layer == self.options.max_levels,
                 });
