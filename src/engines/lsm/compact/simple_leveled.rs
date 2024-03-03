@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::engines::lsm::storage::state::LsmStorageState;
@@ -29,9 +30,7 @@ impl SimpleLeveledCompactionController {
         Self { options }
     }
 
-    /// Generates a compaction task.
-    ///
-    /// Returns `None` if no compaction needs to be scheduled. The order of SSTs in the compaction task id vector matters.
+    // 生成合并任务， 返回 None 代表没有需要合并的任务
     pub fn generate_compaction_task(
         &self,
         snapshot: &LsmStorageState,
@@ -68,19 +67,51 @@ impl SimpleLeveledCompactionController {
         None
     }
 
-    /// Apply the compaction result.
-    ///
-    /// The compactor will call this function with the compaction task and the list of SST ids generated. This function applies the
-    /// result and generates a new LSM state. The functions should only change `l0_sstables` and `levels` without changing memtables
-    /// and `sstables` hash map. Though there should only be one thread running compaction jobs, you should think about the case
-    /// where an L0 SST gets flushed while the compactor generates new SSTs, and with that in mind, you should do some sanity checks
-    /// in your implementation.
+    // 应用合并的结果，修改 l0_sstable 和 level
     pub fn apply_compaction_result(
         &self,
-        _snapshot: &LsmStorageState,
-        _task: &SimpleLeveledCompactionTask,
-        _output: &[usize],
+        snapshot: &LsmStorageState,
+        task: &SimpleLeveledCompactionTask,
+        output: &[usize],
     ) -> (LsmStorageState, Vec<usize>) {
-        unimplemented!()
+        let mut snapshot = snapshot.clone();
+        let mut files_to_remove = Vec::new();
+        match task.upper_level{
+            // L0->L1 compaction
+            None => {
+                files_to_remove.extend(&task.upper_level_sst_ids);
+                // 不直接使用 snapshot的 l0_sstables, 避免对新 flush 到 L0 的 sstable 误操作
+                let mut l0_ssts_compacted = task
+                    .upper_level_sst_ids
+                    .iter()
+                    .copied()
+                    .collect::<HashSet<usize>>();
+                let new_l0_sstables = snapshot
+                    .l0_sstables
+                    .iter()
+                    .copied()
+                    .filter(|x| !l0_ssts_compacted.remove(x))
+                    .collect::<Vec<usize>>();
+                assert!(l0_ssts_compacted.is_empty());
+                snapshot.l0_sstables = new_l0_sstables;
+            },
+            Some(upper_layer) => {
+                assert_eq!(
+                    task.upper_level_sst_ids,
+                    snapshot.levels[upper_layer - 1].1,
+                    "sst mismatched"
+                );
+                files_to_remove.extend(&snapshot.levels[upper_layer - 1].1);
+                snapshot.levels[upper_layer - 1].1.clear();
+            }
+        }
+        assert_eq!(
+            task.lower_level_sst_ids,
+            snapshot.levels[task.lower_level - 1].1,
+            "sst mismatched"
+        );
+        files_to_remove.extend(&snapshot.levels[task.lower_level - 1].1);
+        snapshot.levels[task.lower_level - 1].1 = output.to_vec();
+        (snapshot, files_to_remove)
     }
 }
