@@ -178,7 +178,16 @@ impl LsmStorageInner {
                     MergeIterator::create(l0_iters), SstConcatIterator::create_and_seek_to_first(l1_iters)?)?;
                 self.compact_sst_by_merge_iter(iters)
             },
-            _ => {Ok(vec![])}
+            CompactionTask::Simple(SimpleLeveledCompactionTask{
+                                       upper_level,
+                                       upper_level_sst_ids,
+                                       lower_level,
+                                       lower_level_sst_ids,
+                                       is_lower_level_bottom_level,
+            }) => {
+                unimplemented!()
+            },
+            _ => unreachable!()
         }
     }
 
@@ -240,7 +249,50 @@ impl LsmStorageInner {
     }
 
     fn trigger_compaction(&self) -> Result<()> {
-        unimplemented!()
+        let snapshot = {
+            let guard = self.state.read();
+            Arc::clone(&guard)
+        };
+
+        let generated_task = self.compaction_controller.generate_compaction_task(&snapshot);
+        let Some(task) = generated_task else {
+            return Ok(());
+        };
+
+        let sstables = self.compact(&task)?;
+        let sst_ids: Vec<usize> = sstables.iter().map(|&table| table.sst_id()).collect();
+
+        let sst_to_remove = {
+            let state_lock = self.state_lock.lock();
+            let mut snapshot = self.state.read().as_ref().clone();
+            // 更新 snapshot 中的 level，sstable，[l0_sstables]，修改文件，删除旧的文件
+            for table in sstables {
+                // 向 snapshot 的 sstables 加入新的 sstable
+                let old_sst = snapshot.sstables.insert(table.sst_id(), table);
+                // sstables 中不应该已经存在相同 sst_id 的 sstable
+                assert!(old_sst.is_none());
+            }
+            // 更新 snapshot 中的 level，[l0_sstables]
+            let (mut snapshot, sst_id_to_remove) =
+                self.compaction_controller.apply_compaction_result(&snapshot, &task, sst_ids.as_slice());
+            // 删除 snapshot 的 sstables 中旧的 sstable
+            let mut sst_to_remove = Vec::with_capacity(sst_id_to_remove.len());
+            for old_sst_id in sst_id_to_remove{
+                let old_sst = snapshot.sstables.remove(&old_sst_id);
+                assert!(old_sst.is_some());
+                sst_to_remove.push(old_sst.unwrap());
+            }
+            // 将 snapshot 写回 self.state
+            let mut state = self.state.write();
+            *state = Arc::new(snapshot);
+            sst_to_remove
+        };
+        // 删除旧的 sst 文件
+        for old_sst in sst_to_remove{
+            std::fs::remove_file(self.path_of_sst(old_sst.sst_id()))?;
+        }
+        //self.sync_dir()?;
+        Ok(())
     }
 
     pub(crate) fn spawn_compaction_thread(
