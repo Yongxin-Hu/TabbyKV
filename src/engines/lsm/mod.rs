@@ -7,3 +7,4 @@ mod iterators;
 mod utils;
 mod skiplist;
 mod block;
+mod manifest;

@@ -101,6 +101,7 @@ impl CompactionController {
     }
 }
 
+#[derive(Clone)]
 pub enum CompactionOptions {
     /// Leveled compaction with partial compaction + dynamic level support (= RocksDB's Leveled
     /// Compaction)
@@ -260,7 +261,7 @@ impl LsmStorageInner {
         };
 
         let sstables = self.compact(&task)?;
-        let sst_ids: Vec<usize> = sstables.iter().map(|&table| table.sst_id()).collect();
+        let sst_ids: Vec<usize> = sstables.iter().map(|table| table.sst_id()).collect();
 
         let sst_to_remove = {
             let state_lock = self.state_lock.lock();

@@ -447,12 +447,13 @@ impl LsmStorageInner{
 
 #[cfg(test)]
 mod test{
-    use std::collections::Bound;
+    use std::collections::{Bound, BTreeMap};
     use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;
     use bytes::Bytes;
     use tempfile::tempdir;
+    use crate::engines::lsm::compact::{CompactionOptions, LeveledCompactionOptions, SimpleLeveledCompactionOptions, TieredCompactionOptions};
     use crate::engines::lsm::iterators::concat_iterator::SstConcatIterator;
     use crate::engines::lsm::iterators::StorageIterator;
     use crate::engines::lsm::storage::{LsmStorage, LsmStorageInner};
@@ -1058,6 +1059,5 @@ mod test{
         assert_eq!(storage.get(b"--").unwrap(), None);
         assert_eq!(storage.get(b"555").unwrap(), None);
     }
-
 }
 
