@@ -22,6 +22,7 @@ use crate::engines::lsm::iterators::lsm_iterator::LsmIterator;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 use crate::engines::lsm::iterators::StorageIterator;
 use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
+use crate::engines::lsm::manifest::{Manifest, ManifestRecord};
 use crate::engines::lsm::table::builder::SsTableBuilder;
 use crate::engines::lsm::table::iterator::SsTableIterator;
 use crate::engines::lsm::utils::map_bound;
@@ -126,6 +127,7 @@ pub struct LsmStorageInner {
     path: PathBuf,
     next_sst_id: AtomicUsize,
     pub(crate) options: Arc<LsmStorageOptions>,
+    pub(crate) manifest: Option<Manifest>,
     pub(crate) compaction_controller: CompactionController,
 }
 
@@ -199,6 +201,7 @@ impl LsmStorageInner{
             next_sst_id: AtomicUsize::new(1),
             compaction_controller,
             options: options.into(),
+            manifest: None
         };
         Ok(storage)
     }
@@ -379,9 +382,14 @@ impl LsmStorageInner{
 
     // freeze activate_memtable to readonly_memtable
     pub fn force_freeze_memtable(&self, state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
-        //let mut guard = self.state.write();
-        let memtable = Arc::new(MemTable::create(self.next_sst_id()));
+
+        let next_sst_id = self.next_sst_id();
+        let memtable = Arc::new(MemTable::create(next_sst_id));
         self.freeze_memtable_with_memtable(memtable)?;
+        // 记录 manifest
+        if let Some(manifest) = &self.manifest{
+            manifest.add_record(state_lock_observer, ManifestRecord::NewMemtable(next_sst_id))?;
+        }
         Ok(())
     }
 

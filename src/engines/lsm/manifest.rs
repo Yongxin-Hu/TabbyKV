@@ -53,7 +53,7 @@ impl Manifest {
 
     pub fn add_record(
         &self,
-        _state_lock_observer: &MutexGuard<()>,
+        state_lock_observer: &MutexGuard<()>,
         record: ManifestRecord,
     ) -> Result<()> {
         self.add_record_when_init(record)
