@@ -19,6 +19,7 @@ use crate::engines::lsm::iterators::concat_iterator::SstConcatIterator;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 use crate::engines::lsm::iterators::StorageIterator;
 use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
+use crate::engines::lsm::manifest::ManifestRecord;
 use crate::engines::lsm::storage::LsmStorageInner;
 use crate::engines::lsm::storage::state::LsmStorageState;
 use crate::engines::lsm::table::builder::SsTableBuilder;
@@ -239,7 +240,6 @@ impl LsmStorageInner {
             assert!(l0_sstables_map.is_empty());
 
             *self.state.write() = Arc::new(state);
-            // TODO 这里不知道为什么报Err
             self.sync_dir()?;
         }
         // 删除旧的 sstables 文件
@@ -266,8 +266,10 @@ impl LsmStorageInner {
         let sst_to_remove = {
             let state_lock = self.state_lock.lock();
             let mut snapshot = self.state.read().as_ref().clone();
+            let mut new_sst_ids = Vec::new();
             // 更新 snapshot 中的 level，sstable，[l0_sstables]，修改文件，删除旧的文件
             for table in sstables {
+                new_sst_ids.push(table.sst_id());
                 // 向 snapshot 的 sstables 加入新的 sstable
                 let old_sst = snapshot.sstables.insert(table.sst_id(), table);
                 // sstables 中不应该已经存在相同 sst_id 的 sstable
@@ -286,13 +288,20 @@ impl LsmStorageInner {
             // 将 snapshot 写回 self.state
             let mut state = self.state.write();
             *state = Arc::new(snapshot);
+            // 释放写锁
+            drop(state);
+            self.sync_dir()?;
+            // 记录 manifest
+            if let Some(manifest) = &self.manifest{
+                manifest.add_record(&state_lock, ManifestRecord::Compaction(task, new_sst_ids))?;
+            }
             sst_to_remove
         };
         // 删除旧的 sst 文件
         for old_sst in sst_to_remove{
             std::fs::remove_file(self.path_of_sst(old_sst.sst_id()))?;
         }
-        //self.sync_dir()?;
+        self.sync_dir()?;
         Ok(())
     }
 

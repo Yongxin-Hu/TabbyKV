@@ -412,6 +412,7 @@ impl LsmStorageInner{
     }
 
     pub(super) fn sync_dir(&self) -> Result<()> {
+        #[cfg(target_os = "unix")]
         File::open(&self.path)?.sync_all()?;
         Ok(())
     }
@@ -447,6 +448,10 @@ impl LsmStorageInner{
             snapshot.l0_sstables.insert(0, sstable.sst_id());
             snapshot.sstables.insert(sstable.sst_id(), sstable);
             *guard = Arc::new(snapshot);
+        }
+        // 记录 manifest
+        if let Some(manifest) = &self.manifest{
+            manifest.add_record(&state_lock, ManifestRecord::Flush(sst_id))?;
         }
         Ok(())
     }
