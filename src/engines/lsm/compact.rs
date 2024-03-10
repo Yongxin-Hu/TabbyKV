@@ -117,7 +117,10 @@ pub enum CompactionOptions {
 
 impl LsmStorageInner {
 
-    fn compact_sst_by_merge_iter<I>(&self, mut iter: I) -> Result<Vec<Arc<SsTable>>>
+    fn compact_sst_by_merge_iter<I>(&self,
+                                    mut iter: I,
+                                    compact_to_bottom_level: bool)
+    -> Result<Vec<Arc<SsTable>>>
     where I: StorageIterator
     {
         let mut sst_builder = None;
@@ -128,9 +131,14 @@ impl LsmStorageInner {
                 sst_builder = Some(SsTableBuilder::new(self.options.block_size));
             }
             let builder_inner = sst_builder.as_mut().unwrap();
-            if !iter.value().is_empty(){
+            if compact_to_bottom_level{
+                if !iter.value().is_empty(){
+                    builder_inner.add(iter.key(), iter.value());
+                }
+            } else {
                 builder_inner.add(iter.key(), iter.value());
             }
+
             iter.next()?;
 
             if builder_inner.estimated_size() >= self.options.target_sst_size {
@@ -154,7 +162,7 @@ impl LsmStorageInner {
         Ok(sst)
     }
 
-    // 根据 CompactionTask 执行 compact
+    // 根据 CompactionTask 执行 compact, 返回新生成的 sstables
     fn compact(&self, task: &CompactionTask) -> Result<Vec<Arc<SsTable>>> {
         let snapshot = {
             let guard = self.state.read();
@@ -171,23 +179,55 @@ impl LsmStorageInner {
                         snapshot.sstables.get(sst_id).unwrap().clone(),
                     )?));
                 }
-                let mut l1_iters = Vec::with_capacity(l1_sstables.len());
+                let mut l1_ssts = Vec::with_capacity(l1_sstables.len());
                 for sst_id in l1_sstables{
-                    l1_iters.push(snapshot.sstables.get(sst_id).unwrap().clone());
+                    l1_ssts.push(snapshot.sstables.get(sst_id).unwrap().clone());
                 }
                 // 由于 L1 层 sstable 的 Key 已经没有重叠了，使用 SstConcatIterator 来减少不必要的 read_block
                 let iters = TwoMergeIterator::create(
-                    MergeIterator::create(l0_iters), SstConcatIterator::create_and_seek_to_first(l1_iters)?)?;
-                self.compact_sst_by_merge_iter(iters)
+                    MergeIterator::create(l0_iters), SstConcatIterator::create_and_seek_to_first(l1_ssts)?)?;
+                self.compact_sst_by_merge_iter(iters, task.compact_to_bottom_level())
             },
             CompactionTask::Simple(SimpleLeveledCompactionTask{
                                        upper_level,
                                        upper_level_sst_ids,
                                        lower_level,
                                        lower_level_sst_ids,
-                                       is_lower_level_bottom_level,
+                                       ..
             }) => {
-                unimplemented!()
+                match upper_level {
+                    // L0 -> L1 compaction
+                    None => {
+                        let mut l0_iters = Vec::with_capacity(upper_level_sst_ids.len());
+                        for sst_id in upper_level_sst_ids{
+                            l0_iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
+                                snapshot.sstables.get(sst_id).unwrap().clone(),
+                            )?));
+                        }
+                        let mut l1_ssts = Vec::with_capacity(lower_level_sst_ids.len());
+                        for sst_id in lower_level_sst_ids{
+                            l1_ssts.push(snapshot.sstables.get(sst_id).unwrap().clone());
+                        }
+                        let iters = TwoMergeIterator::create(
+                            MergeIterator::create(l0_iters), SstConcatIterator::create_and_seek_to_first(l1_ssts)?)?;
+                        self.compact_sst_by_merge_iter(iters, task.compact_to_bottom_level())
+                    },
+                    Some(_) => {
+                        let mut upper_ssts = Vec::with_capacity(upper_level_sst_ids.len());
+                        for sst_id in upper_level_sst_ids{
+                            upper_ssts.push(snapshot.sstables.get(sst_id).unwrap().clone());
+                        }
+                        let mut lower_ssts = Vec::with_capacity(lower_level_sst_ids.len());
+                        for sst_id in lower_level_sst_ids{
+                            lower_ssts.push(snapshot.sstables.get(sst_id).unwrap().clone());
+                        }
+                        let iters = TwoMergeIterator::create(
+                            SstConcatIterator::create_and_seek_to_first(upper_ssts)?,
+                            SstConcatIterator::create_and_seek_to_first(lower_ssts)?
+                        )?;
+                        self.compact_sst_by_merge_iter(iters, task.compact_to_bottom_level())
+                    }
+                }
             },
             _ => unreachable!()
         }
@@ -263,6 +303,7 @@ impl LsmStorageInner {
         let sstables = self.compact(&task)?;
         let sst_ids: Vec<usize> = sstables.iter().map(|table| table.sst_id()).collect();
 
+        // 移除旧的 sstable 以及 修改 state 中的记录
         let sst_to_remove = {
             let state_lock = self.state_lock.lock();
             let mut snapshot = self.state.read().as_ref().clone();
