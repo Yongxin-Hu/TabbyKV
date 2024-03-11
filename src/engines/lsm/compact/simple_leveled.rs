@@ -30,7 +30,12 @@ impl SimpleLeveledCompactionController {
         Self { options }
     }
 
-    // 生成合并任务， 返回 None 代表没有需要合并的任务
+    /// 根据当前 state 快照生成合并任务
+    /// # 参数
+    /// * `snapshot` state快照
+    /// # 返回值
+    /// None : 无需 compaction
+    /// Some(task) : 需要执行 SimpleLeveledCompactionTask
     pub fn generate_compaction_task(
         &self,
         snapshot: &LsmStorageState,
@@ -67,7 +72,13 @@ impl SimpleLeveledCompactionController {
         None
     }
 
-    // 应用合并的结果，修改 l0_sstable 和 level
+    /// 应用合并的结果，修改 l0_sstable 和 level
+    /// # 参数
+    /// * `snapshot` state快照
+    /// * `task` SimpleLeveledCompactionTask
+    /// * `output` compaction 后生成的 sst_ids
+    /// # 返回值
+    /// (LsmStorageState, Vec<usize>) : 修改后的state, 需要移除的 sst_ids
     pub fn apply_compaction_result(
         &self,
         snapshot: &LsmStorageState,
