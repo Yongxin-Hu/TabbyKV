@@ -12,11 +12,11 @@ pub struct LsmStorageState {
     pub active_memtable: Arc<MemTable>,
     /// 只读的 mem_table
     pub readonly_memtables: Vec<Arc<MemTable>>,
-    /// L0 layer sstables's id
+    /// L0 层的 sstables's id
     pub l0_sstables: Vec<usize>,
-    /// L1 - Lmax layer sstables, (layer, Vec(sstable id))
+    /// L1 - Lmax 层的 sstables, (layer, Vec(sstable id))
     pub levels: Vec<(usize, Vec<usize>)>,
-    /// SST objects.
+    /// ()
     pub sstables: HashMap<usize, Arc<SsTable>>,
 }
 

@@ -1,7 +1,7 @@
 pub(crate) mod state;
 mod option;
 
-use std::collections::Bound;
+use std::collections::{Bound, BTreeMap, BTreeSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,6 +25,7 @@ use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::engines::lsm::manifest::{Manifest, ManifestRecord};
 use crate::engines::lsm::table::builder::SsTableBuilder;
 use crate::engines::lsm::table::iterator::SsTableIterator;
+use crate::engines::lsm::table::{FileObject, SsTable};
 use crate::engines::lsm::utils::map_bound;
 
 
@@ -44,7 +45,7 @@ impl Drop for LsmStorage{
     fn drop(&mut self) {
         // 停止 flush_thread 以及 compaction_thread
         self.compaction_notifier.send(()).ok();
-        self.flush_notifier.send(()).unwrap();
+        self.flush_notifier.send(()).ok();
     }
 }
 
@@ -63,6 +64,12 @@ impl LsmStorage{
         let mut compaction_thread = self.compaction_thread.lock();
         if let Some(compaction_thread) = compaction_thread.take(){
             compaction_thread.join().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        }
+
+        if self.inner.options.enable_wal {
+            //self.inner.sync()?;
+            self.inner.sync_dir()?;
+            return Ok(());
         }
 
         if !self.inner.state.read().active_memtable.is_empty() {
@@ -173,14 +180,10 @@ impl LsmStorageInner{
         true
     }
 
-    // TODO
     pub(crate) fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Self>{
         let path = path.as_ref();
-        if !path.exists() {
-            // 创建 kv 存储文件
-            std::fs::create_dir_all(path).context("failed to create kv store path.")?;
-        }
-        let state = LsmStorageState::create(&options);
+        let mut state = LsmStorageState::create(&options);
+        let mut next_sst_id = 1usize;
         let compaction_controller = match &options.compaction_options {
             CompactionOptions::Leveled(options) => {
                 CompactionController::Leveled(LeveledCompactionController::new(options.clone()))
@@ -193,15 +196,72 @@ impl LsmStorageInner{
             ),
             CompactionOptions::NoCompaction => CompactionController::NoCompaction,
         };
+        if !path.exists() {
+            // 创建 kv 存储文件
+            std::fs::create_dir_all(path).context("failed to create kv store path.")?;
+        }
+        let manifest;
+        let manifest_path = path.join("MANIFEST");
+        if manifest_path.exists() {
+            // 根据 Manifest 恢复 state
+            let (m, records) = Manifest::recover(manifest_path)?;
+            let mut mem_table = BTreeSet::new();
+            for record in records {
+                match record {
+                    ManifestRecord::NewMemtable(id) => {
+                        next_sst_id = next_sst_id.max(id);
+                        mem_table.insert(id);
+                    }
+                    ManifestRecord::Flush(sst_id) => {
+                        assert!(mem_table.remove(&sst_id), "memtable not exist!");
+                        state.l0_sstables.insert(0, sst_id);
+                        next_sst_id = next_sst_id.max(sst_id);
+                    }
+                    ManifestRecord::Compaction(task, output) => {
+                        let (new_state, _) =
+                            compaction_controller.apply_compaction_result(&state, &task, &output);
+                        state = new_state;
+                        next_sst_id = next_sst_id.max(output.iter().max().copied().unwrap_or_default());
+                    }
+                }
+            }
+
+            // 恢复 state 的 sstables
+            for sst_id in state.l0_sstables.iter()
+                .chain(state.levels.iter().flat_map(|(_, files)| files))
+            {
+                let sst_id = *sst_id;
+                let sst = SsTable::open(
+                    sst_id,
+                    FileObject::open(Self::path_of_sst_static(path, sst_id).as_path())?
+                )?;
+                state.sstables.insert(sst_id, Arc::new(sst));
+            }
+
+            next_sst_id += 1;
+            // 恢复 state 的 memtable
+            if options.enable_wal {
+                unimplemented!();
+            } else {
+                state.active_memtable = Arc::new(MemTable::create(next_sst_id))
+            }
+
+            next_sst_id += 1;
+            m.add_record_when_init(ManifestRecord::NewMemtable(state.active_memtable.id()))?;
+            manifest = m;
+        } else {
+            manifest = Manifest::create(manifest_path).expect("fail to create manifest!");
+            manifest.add_record_when_init(ManifestRecord::NewMemtable(state.active_memtable.id()))?;
+        }
 
         let storage = LsmStorageInner {
             state: Arc::new(RwLock::new(Arc::new(state))),
             state_lock: Mutex::new(()),
             path: path.to_path_buf(),
-            next_sst_id: AtomicUsize::new(1),
+            next_sst_id: AtomicUsize::new(next_sst_id),
             compaction_controller,
             options: options.into(),
-            manifest: None
+            manifest: Some(manifest)
         };
         Ok(storage)
     }
@@ -230,7 +290,7 @@ impl LsmStorageInner{
         let mut l0_iter = Vec::with_capacity(snapshot.l0_sstables.len());
         for table_id in &snapshot.l0_sstables {
             let table = snapshot.sstables[table_id].clone();
-            // 跳过不含 key 的sstable
+            // 根据 sst 的first_key, last_key 以及 bloom_filter，跳过不含 key 的sstable
             if Self::check_key_in_range(
                 Bytes::copy_from_slice(key),
                 table.first_key(),
@@ -469,11 +529,12 @@ mod test{
     use crate::engines::lsm::compact::{CompactionOptions, LeveledCompactionOptions, SimpleLeveledCompactionOptions, TieredCompactionOptions};
     use crate::engines::lsm::iterators::concat_iterator::SstConcatIterator;
     use crate::engines::lsm::iterators::StorageIterator;
+    use crate::engines::lsm::manifest::Manifest;
     use crate::engines::lsm::storage::{LsmStorage, LsmStorageInner};
     use crate::engines::lsm::storage::option::LsmStorageOptions;
     use crate::engines::lsm::table::builder::SsTableBuilder;
     use crate::engines::lsm::table::SsTable;
-    use crate::engines::lsm::utils::{check_iter_result_by_key, check_lsm_iter_result_by_key, construct_merge_iterator_over_storage, sync};
+    use crate::engines::lsm::utils::{check_iter_result_by_key, check_lsm_iter_result_by_key, construct_merge_iterator_over_storage, dump_files_in_dir, sync};
 
     #[test]
     fn test_storage_integration() {
@@ -1072,5 +1133,59 @@ mod test{
         assert_eq!(storage.get(b"--").unwrap(), None);
         assert_eq!(storage.get(b"555").unwrap(), None);
     }
+
+    #[test]
+    fn test_integration_simple() {
+        test_integration_4(CompactionOptions::Simple(SimpleLeveledCompactionOptions {
+            size_ratio_percent: 200,
+            level0_file_num_compaction_trigger: 2,
+            max_levels: 3,
+        }));
+    }
+
+    fn test_integration_4(compaction_options: CompactionOptions) {
+        let dir = tempdir().unwrap();
+        let storage = LsmStorage::open(
+            &dir,
+            LsmStorageOptions::default_for_week2_test(compaction_options.clone()),
+        ).unwrap();
+        for i in 0..=20 {
+            storage.put(b"0", format!("v{}", i).as_bytes()).unwrap();
+            if i % 2 == 0 {
+                storage.put(b"1", format!("v{}", i).as_bytes()).unwrap();
+            } else {
+                storage.delete(b"1").unwrap();
+            }
+            if i % 2 == 1 {
+                storage.put(b"2", format!("v{}", i).as_bytes()).unwrap();
+            } else {
+                storage.delete(b"2").unwrap();
+            }
+            storage
+                .inner
+                .force_freeze_memtable(&storage.inner.state_lock.lock())
+                .unwrap();
+        }
+        storage.close().unwrap();
+        // ensure all SSTs are flushed
+        assert!(storage.inner.state.read().active_memtable.is_empty());
+        assert!(storage.inner.state.read().readonly_memtables.is_empty());
+        //storage.dump_structure();
+        drop(storage);
+        dump_files_in_dir(&dir);
+        let (m, records) = Manifest::recover(dir.path().join("MANIFEST")).unwrap();
+        for record in records {
+            println!("{record:?}");
+        }
+
+        let storage = LsmStorage::open(
+            &dir,
+            LsmStorageOptions::default_for_week2_test(compaction_options.clone()),
+        ).unwrap();
+        assert_eq!(storage.get(b"0").unwrap().unwrap().as_ref(), b"v20".as_slice());
+        assert_eq!(storage.get(b"1").unwrap().unwrap().as_ref(), b"v20".as_slice());
+        assert_eq!(storage.get(b"2").unwrap(), None);
+    }
+
 }
 

@@ -13,7 +13,7 @@ pub struct Manifest {
     file: Arc<Mutex<File>>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum ManifestRecord {
     Flush(usize),
     NewMemtable(usize),
@@ -22,7 +22,7 @@ pub enum ManifestRecord {
 
 impl Manifest {
     pub fn create(path: impl AsRef<Path>) -> Result<Self> {
-        let file = OpenOptions::new().read(true).write(true).open(path)?;
+        let file = OpenOptions::new().create_new(true).read(true).write(true).open(path)?;
         Ok(Self{
             file: Arc::new(Mutex::new(file))
         })
@@ -42,6 +42,7 @@ impl Manifest {
             let len = buf_ptr.get_u64();
             let slice = &buf_ptr[..len as usize];
             let record: ManifestRecord = serde_json::from_slice(slice)?;
+            buf_ptr.advance(len as usize);
             let checksum = buf_ptr.get_u32();
             assert_eq!(checksum,  crc32fast::hash(slice), "checksum mismatched!");
             manifest_records.push(record);
