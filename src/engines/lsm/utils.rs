@@ -165,15 +165,3 @@ pub fn construct_merge_iterator_over_storage(
     }
     MergeIterator::create(iters)
 }
-
-pub fn dump_files_in_dir(path: impl AsRef<Path>) {
-    println!("--- DIR DUMP ---");
-    for f in path.as_ref().read_dir().unwrap() {
-        let f = f.unwrap();
-        print!("{}", f.path().display());
-        println!(
-            ", size={:.3}KB",
-            f.metadata().unwrap().file_size() as f64 / 1024.0
-        );
-    }
-}

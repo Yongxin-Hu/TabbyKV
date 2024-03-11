@@ -534,7 +534,7 @@ mod test{
     use crate::engines::lsm::storage::option::LsmStorageOptions;
     use crate::engines::lsm::table::builder::SsTableBuilder;
     use crate::engines::lsm::table::SsTable;
-    use crate::engines::lsm::utils::{check_iter_result_by_key, check_lsm_iter_result_by_key, construct_merge_iterator_over_storage, dump_files_in_dir, sync};
+    use crate::engines::lsm::utils::{check_iter_result_by_key, check_lsm_iter_result_by_key, construct_merge_iterator_over_storage, sync};
 
     #[test]
     fn test_storage_integration() {
@@ -1172,7 +1172,6 @@ mod test{
         assert!(storage.inner.state.read().readonly_memtables.is_empty());
         //storage.dump_structure();
         drop(storage);
-        dump_files_in_dir(&dir);
         let (m, records) = Manifest::recover(dir.path().join("MANIFEST")).unwrap();
         for record in records {
             println!("{record:?}");
