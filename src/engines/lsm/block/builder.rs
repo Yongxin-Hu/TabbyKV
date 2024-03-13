@@ -22,7 +22,13 @@ impl BlockBuilder {
         }
     }
 
-    // 将 kv-pair 添加到块中。当 Block 已满时返回 false
+    /// 将 kv-pair 添加到块中。当 Block 已满时返回 false
+    /// # 参数
+    /// * key key
+    /// * value value
+    /// # 返回值
+    /// true 添加成功
+    /// false 添加失败
     #[must_use]
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
         assert!(!key.is_empty(), "key must not be empty");

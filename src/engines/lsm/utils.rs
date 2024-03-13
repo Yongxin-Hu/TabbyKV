@@ -1,6 +1,4 @@
 use std::collections::Bound;
-use std::os::windows::fs::MetadataExt;
-use std::path::Path;
 use anyhow::bail;
 use bytes::Bytes;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;

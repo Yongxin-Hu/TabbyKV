@@ -20,7 +20,7 @@ pub struct SsTableBuilder {
 
 
 impl SsTableBuilder{
-    // 根据给定的 block_size 创建 sstable_builder
+    /// 根据给定的 block_size 创建 sstable_builder
     pub fn new(block_size: usize) -> Self {
         SsTableBuilder{
             block_builder: BlockBuilder::new(block_size),
@@ -33,7 +33,7 @@ impl SsTableBuilder{
         }
     }
 
-    // 向 sstable 中添加 kv-pair (在 Block 满的时候新建 Block)
+    /// 向 sstable 中添加 kv-pair (在 Block 满的时候新建 Block)
     pub fn add(&mut self, key: &[u8], value: &[u8]) {
         // BloomFilter 记录 key
         self.bloom_filter.add(key);
@@ -55,7 +55,7 @@ impl SsTableBuilder{
         self.last_key = Bytes::copy_from_slice(key);
     }
 
-    // 构建 block
+    /// 构建 block
     fn complete_block(&mut self) {
         let block_builder = std::mem::replace(&mut self.block_builder, BlockBuilder::new(self.block_size));
         self.meta.push(BlockMeta{
@@ -66,12 +66,12 @@ impl SsTableBuilder{
         self.data.extend(block_builder.build().encode().to_vec());
     }
 
-    // 计算 sstable的估计大小
+    /// 计算 sstable的估计大小
     pub fn estimated_size(&self) -> usize {
         self.data.len()
     }
 
-    // 构建 sstable
+    /// 构建 sstable
     pub fn build(
         mut self,
         id: usize,

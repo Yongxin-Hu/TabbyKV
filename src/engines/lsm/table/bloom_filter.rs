@@ -74,6 +74,7 @@ impl BloomFilter{
         }
     }
 
+    /// 是否可能包含 key
     pub fn may_contain(&self, key:&[u8]) -> bool{
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
