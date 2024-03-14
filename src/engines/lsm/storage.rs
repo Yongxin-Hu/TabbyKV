@@ -31,13 +31,13 @@ use crate::engines::lsm::utils::map_bound;
 
 struct LsmStorage{
     pub(crate) inner: Arc<LsmStorageInner>,
-    /// Notifies the L0 flush thread to stop working.
+    /// 通知 Flush 线程停止工作
     flush_notifier: crossbeam_channel::Sender<()>,
-    /// The handle for the compaction thread.
+    /// Flush 线程
     flush_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
-    /// Notifies the compaction thread to stop working.
+    /// 通知 compaction 线程停止工作
     compaction_notifier: crossbeam_channel::Sender<()>,
-    /// The handle for the compaction thread.
+    /// Compaction 线程
     compaction_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
@@ -486,34 +486,12 @@ impl LsmStorageInner{
         *guard = Arc::new(snapshot);
 
         drop(guard);
-        //old_memtable.sync_wal()?;
+        old_memtable.sync_wal()?;
 
         Ok(())
     }
 
-    pub(super) fn sync_dir(&self) -> Result<()> {
-        #[cfg(target_os = "unix")]
-        File::open(&self.path)?.sync_all()?;
-        Ok(())
-    }
-
-    pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
-        path.as_ref().join(format!("{:05}.sst", id))
-    }
-
-    pub(crate) fn path_of_sst(&self, id: usize) -> PathBuf{
-        Self::path_of_sst_static(&self.path, id)
-    }
-
-    pub(crate) fn path_of_wal_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
-        path.as_ref().join(format!("{:05}.wal", id))
-    }
-
-    pub(crate) fn path_of_wal(&self, id: usize) -> PathBuf{
-        Self::path_of_wal_static(&self.path, id)
-    }
-
-    // 强制将最早的 memtable 转入 L0 层
+    /// 强制将最早的 memtable 转入 L0 层
     pub fn force_flush_earliest_memtable(&self) -> Result<()>{
         let state_lock = self.state_lock.lock();
         let earliest_memtable;
@@ -552,8 +530,34 @@ impl LsmStorageInner{
         Ok(())
     }
 
+    /// 同步 WAL 文件
     pub fn sync(&self) -> Result<()> {
         self.state.read().active_memtable.sync_wal()
+    }
+
+    /// 同步 kv 存储文件
+    pub(super) fn sync_dir(&self) -> Result<()> {
+        #[cfg(target_os = "unix")]
+        File::open(&self.path)?.sync_all()?;
+        Ok(())
+    }
+
+    /// sst 文件格式 sst_id.sst
+    pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
+        path.as_ref().join(format!("{:05}.sst", id))
+    }
+
+    pub(crate) fn path_of_sst(&self, id: usize) -> PathBuf{
+        Self::path_of_sst_static(&self.path, id)
+    }
+
+    /// wal 文件格式 mem_table_id.wal
+    pub(crate) fn path_of_wal_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
+        path.as_ref().join(format!("{:05}.wal", id))
+    }
+
+    pub(crate) fn path_of_wal(&self, id: usize) -> PathBuf{
+        Self::path_of_wal_static(&self.path, id)
     }
 }
 

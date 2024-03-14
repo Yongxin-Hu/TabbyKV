@@ -6,8 +6,8 @@
 - block ✔
 - sstable ✔
 - compaction ***WIP***
-- manifest ***WIP***
-- WAL
+- manifest ✔
+- WAL ✔
 2. Bitcask
 
 ## MVCC

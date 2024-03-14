@@ -45,7 +45,10 @@ impl MemTable {
         })
     }
 
-    /// Create a memtable from WAL
+    /// 使用 WAL 恢复 memtable 的 skipmap
+    /// # 参数
+    /// * `id` memtable 的 id
+    /// * `path` wal 文件路径
     pub fn recover_from_wal(id: usize, path: impl AsRef<Path>) -> Result<Self> {
         let map = Arc::new(SkipMap::new());
         Ok(Self {
