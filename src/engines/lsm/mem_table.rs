@@ -1,4 +1,5 @@
 use std::ops::Bound;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use bytes::Bytes;
@@ -34,6 +35,27 @@ impl MemTable {
         }
     }
 
+    /// 创建带有 WAL 的 mem_table
+    pub fn create_with_wal(id: usize, path: impl AsRef<Path>) -> Result<Self> {
+        Ok(Self {
+            id,
+            map: Arc::new(SkipMap::new()),
+            wal: Some(Wal::create(path.as_ref())?),
+            approximate_size: Arc::new(AtomicUsize::new(0)),
+        })
+    }
+
+    /// Create a memtable from WAL
+    pub fn recover_from_wal(id: usize, path: impl AsRef<Path>) -> Result<Self> {
+        let map = Arc::new(SkipMap::new());
+        Ok(Self {
+            id,
+            wal: Some(Wal::recover(path.as_ref(), &map)?),
+            map,
+            approximate_size: Arc::new(AtomicUsize::new(0)),
+        })
+    }
+
     /// 根据 key 获取 value
     pub fn get(&self, key: &[u8]) -> Option<Bytes> {
         match self.map.get(key){
@@ -48,6 +70,9 @@ impl MemTable {
         self.map.insert(Bytes::copy_from_slice(key),Bytes::copy_from_slice(value));
         self.approximate_size
             .fetch_add(estimated_size, std::sync::atomic::Ordering::Relaxed);
+        if let Some(wal) = &self.wal {
+            wal.put(key, value)?;
+        }
         Ok(())
     }
 
@@ -85,6 +110,13 @@ impl MemTable {
 
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
+    }
+
+    pub fn sync_wal(&self) -> Result<()> {
+        if let Some(ref wal) = self.wal {
+            wal.sync()?;
+        }
+        Ok(())
     }
 }
 

@@ -67,7 +67,7 @@ impl LsmStorage{
         }
 
         if self.inner.options.enable_wal {
-            //self.inner.sync()?;
+            self.inner.sync()?;
             self.inner.sync_dir()?;
             return Ok(());
         }
@@ -241,7 +241,16 @@ impl LsmStorageInner{
             next_sst_id += 1;
             // 恢复 state 的 memtable
             if options.enable_wal {
-                unimplemented!();
+                for id in mem_table{
+                    let mem_table
+                        = MemTable::recover_from_wal(id, Self::path_of_wal_static(path, id))?;
+                    if !mem_table.is_empty() {
+                        state.readonly_memtables.insert(0, Arc::new(mem_table));
+                    }
+                }
+                state.active_memtable = Arc::new(MemTable::create_with_wal(
+                    next_sst_id, Self::path_of_wal_static(path, next_sst_id)
+                )?);
             } else {
                 state.active_memtable = Arc::new(MemTable::create(next_sst_id))
             }
@@ -250,6 +259,12 @@ impl LsmStorageInner{
             m.add_record_when_init(ManifestRecord::NewMemtable(state.active_memtable.id()))?;
             manifest = m;
         } else {
+            if options.enable_wal {
+                state.active_memtable = Arc::new(MemTable::create_with_wal(
+                    state.active_memtable.id(),
+                    Self::path_of_wal_static(path, state.active_memtable.id()),
+                )?);
+            }
             manifest = Manifest::create(manifest_path).expect("fail to create manifest!");
             manifest.add_record_when_init(ManifestRecord::NewMemtable(state.active_memtable.id()))?;
         }
@@ -444,7 +459,12 @@ impl LsmStorageInner{
     pub fn force_freeze_memtable(&self, state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
 
         let next_sst_id = self.next_sst_id();
-        let memtable = Arc::new(MemTable::create(next_sst_id));
+        let memtable;
+        if self.options.enable_wal {
+            memtable =  Arc::new(MemTable::create_with_wal(next_sst_id, self.path_of_wal(next_sst_id))?);
+        } else {
+            memtable = Arc::new(MemTable::create(next_sst_id));
+        }
         self.freeze_memtable_with_memtable(memtable)?;
         // 记录 manifest
         if let Some(manifest) = &self.manifest{
@@ -485,6 +505,14 @@ impl LsmStorageInner{
         Self::path_of_sst_static(&self.path, id)
     }
 
+    pub(crate) fn path_of_wal_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
+        path.as_ref().join(format!("{:05}.wal", id))
+    }
+
+    pub(crate) fn path_of_wal(&self, id: usize) -> PathBuf{
+        Self::path_of_wal_static(&self.path, id)
+    }
+
     // 强制将最早的 memtable 转入 L0 层
     pub fn force_flush_earliest_memtable(&self) -> Result<()>{
         let state_lock = self.state_lock.lock();
@@ -509,11 +537,23 @@ impl LsmStorageInner{
             snapshot.sstables.insert(sstable.sst_id(), sstable);
             *guard = Arc::new(snapshot);
         }
+
+        if self.options.enable_wal {
+            std::fs::remove_file(self.path_of_wal(sst_id))?;
+        }
+
         // 记录 manifest
         if let Some(manifest) = &self.manifest{
             manifest.add_record(&state_lock, ManifestRecord::Flush(sst_id))?;
         }
+
+        self.sync_dir()?;
+
         Ok(())
+    }
+
+    pub fn sync(&self) -> Result<()> {
+        self.state.read().active_memtable.sync_wal()
     }
 }
 
@@ -1172,10 +1212,6 @@ mod test{
         assert!(storage.inner.state.read().readonly_memtables.is_empty());
         //storage.dump_structure();
         drop(storage);
-        let (m, records) = Manifest::recover(dir.path().join("MANIFEST")).unwrap();
-        for record in records {
-            println!("{record:?}");
-        }
 
         let storage = LsmStorage::open(
             &dir,
