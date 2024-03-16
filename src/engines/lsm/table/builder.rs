@@ -63,7 +63,10 @@ impl SsTableBuilder{
             first_key: std::mem::take(&mut self.first_key),
             last_key: std::mem::take(&mut self.last_key),
         });
-        self.data.extend(block_builder.build().encode().to_vec());
+        let mut block_data = block_builder.build().encode().to_vec();
+        let checksum = crc32fast::hash(&block_data);
+        block_data.put_u32(checksum);
+        self.data.extend(block_data);
     }
 
     /// 计算 sstable的估计大小

@@ -130,14 +130,19 @@ impl SsTable {
         })
     }
 
-    // 获取 sstable 的第 index 个 Block
+    /// 获取 sstable 的第 index 个 Block
+    /// # 参数
+    /// * index: sstable 中 Block 的 index
     pub fn read_block(&self, index: usize) -> Result<Arc<Block>> {
         let offset = self.block_meta[index].offset as u64;
         let offset_end = self.block_meta
             .get(index+1).map_or(self.block_meta_offset, |x| x.offset) as u64;
         // 此处有一个对文件的 IO
         let data = self.file.read(offset, offset_end-offset)?;
-        Ok(Arc::new(Block::decode(data.as_slice())))
+        let block_data = &data[..data.len()-4];
+        let checksum = (&data[data.len()-4..]).get_u32();
+        assert_eq!(checksum, crc32fast::hash(block_data), "block checksum mismatched!");
+        Ok(Arc::new(Block::decode(block_data)))
     }
 
     // 找到一个可能包含 key 的 Block

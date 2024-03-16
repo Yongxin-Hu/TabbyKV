@@ -48,7 +48,7 @@ impl BlockBuilder {
         false
     }
 
-    // 检查加入 KV-Pair 后是否超出 block_size 大小
+    /// 检查加入 KV-Pair 后是否超出 block_size 大小
     fn check_size(&mut self, key: &[u8], value: &[u8]) -> bool {
         let prev_size = SIZEOF_U16 /* num_of_elements(2byte) */
             + self.offsets.len() * SIZEOF_U16 /* offset */

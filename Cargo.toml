@@ -2,6 +2,7 @@
 name = "tabby_kv"
 version = "0.1.0"
 edition = "2021"
+authors = []
 
 [[bin]]
 name="server"
