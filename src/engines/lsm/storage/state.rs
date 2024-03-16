@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::collections::HashMap;
-use crate::engines::lsm::compact::{CompactionOptions, LeveledCompactionOptions, SimpleLeveledCompactionOptions};
+use crate::engines::lsm::compact::{LeveledCompactionOptions, SimpleLeveledCompactionOptions};
 use crate::engines::lsm::mem_table::MemTable;
-use crate::engines::lsm::storage::option::LsmStorageOptions;
+use crate::engines::lsm::storage::option::{CompactionOptions, LsmStorageOptions};
 use crate::engines::lsm::table::SsTable;
 
 // LSM-tree 状态

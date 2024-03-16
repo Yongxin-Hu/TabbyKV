@@ -1,20 +1,19 @@
 pub(crate) mod state;
-mod option;
+pub(crate) mod option;
 
-use std::collections::{Bound, BTreeMap, BTreeSet};
-use std::fs::File;
+use std::collections::{Bound, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 use crate::engines::lsm::mem_table::MemTable;
 use crate::engines::lsm::compact::{
-    CompactionController, CompactionOptions, LeveledCompactionController,
+    CompactionController, LeveledCompactionController,
     SimpleLeveledCompactionController, TieredCompactionController,
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use option::LsmStorageOptions;
+use option::{CompactionOptions, LsmStorageOptions};
 use state::LsmStorageState;
 use crate::engines::lsm::iterators::concat_iterator::SstConcatIterator;
 use crate::engines::lsm::iterators::fused_iterator::FusedIterator;
@@ -29,7 +28,7 @@ use crate::engines::lsm::table::{FileObject, SsTable};
 use crate::engines::lsm::utils::map_bound;
 
 
-struct LsmStorage{
+pub struct LsmStorage{
     pub(crate) inner: Arc<LsmStorageInner>,
     /// 通知 Flush 线程停止工作
     flush_notifier: crossbeam_channel::Sender<()>,
@@ -585,18 +584,17 @@ impl LsmStorageInner{
 
 #[cfg(test)]
 mod test{
-    use std::collections::{Bound, BTreeMap};
+    use std::collections::Bound;
     use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;
     use bytes::Bytes;
     use tempfile::tempdir;
-    use crate::engines::lsm::compact::{CompactionOptions, LeveledCompactionOptions, SimpleLeveledCompactionOptions, TieredCompactionOptions};
+    use crate::engines::lsm::compact::SimpleLeveledCompactionOptions;
     use crate::engines::lsm::iterators::concat_iterator::SstConcatIterator;
     use crate::engines::lsm::iterators::StorageIterator;
-    use crate::engines::lsm::manifest::Manifest;
     use crate::engines::lsm::storage::{LsmStorage, LsmStorageInner};
-    use crate::engines::lsm::storage::option::LsmStorageOptions;
+    use crate::engines::lsm::storage::option::{CompactionOptions, LsmStorageOptions};
     use crate::engines::lsm::table::builder::SsTableBuilder;
     use crate::engines::lsm::table::SsTable;
     use crate::engines::lsm::utils::{check_iter_result_by_key, check_lsm_iter_result_by_key, construct_merge_iterator_over_storage, sync};

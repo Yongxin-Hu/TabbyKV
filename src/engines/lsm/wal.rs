@@ -56,13 +56,21 @@ impl Wal {
 
     /// 向 WAL 中追加写入 [key_len(2byte), key , value_len(2byte), value]
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        let mut hasher = crc32fast::Hasher::new();
         let mut data = Vec::new();
-        data.put_u16(key.len() as u16);
+        let key_len = key.len() as u16;
+        data.put_u16(key_len);
+        hasher.write_u16(key_len);
         data.put_slice(key);
-        data.put_u16(value.len() as u16);
+        hasher.write(key);
+        let value_len = value.len() as u16;
+        data.put_u16(value_len);
+        hasher.write_u16(value_len);
         data.put_slice(value);
+        hasher.write(value);
         // checksum
-        let checksum = crc32fast::hash(data.as_slice());
+        //let checksum = crc32fast::hash(data.as_slice());
+        let checksum = hasher.finalize();
         data.put_u32(checksum);
         let mut file = self.file.lock();
         file.write_all(data.as_slice())?;

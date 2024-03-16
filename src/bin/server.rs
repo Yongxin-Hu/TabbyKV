@@ -1,13 +1,14 @@
+use std::path::{Path, PathBuf};
 use structopt::clap::arg_enum;
 use structopt::StructOpt;
-use tabby_kv::engines::KvStore;
+use tabby_kv::engines::LsmStore;
 use tabby_kv::server::Server;
-
+use anyhow::Result;
 
 arg_enum! {
     #[derive(Debug, Copy, Clone, PartialEq, Eq)]
     enum EngineType {
-        KvStore
+        LsmStore
     }
 }
 
@@ -21,17 +22,19 @@ struct Arg{
     #[structopt(long,
     possible_values = &EngineType::variants(),
     case_insensitive = true,
-    default_value = "KvStore")]
+    default_value = "LsmStore")]
     engine: EngineType
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()>{
     let arg = Arg::from_args();
-
+    // TODO temp
+    let dir = Path::new(r"D:\temp\db");
     let mut server = Server::new(match arg.engine{
-        EngineType::KvStore => KvStore::new()
+        EngineType::LsmStore => LsmStore::new(&dir)?
     });
 
     server.run(&arg.host, &arg.port).await.expect("Error");
+    server.close()
 }

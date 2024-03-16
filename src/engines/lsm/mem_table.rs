@@ -76,6 +76,7 @@ impl MemTable {
         if let Some(wal) = &self.wal {
             wal.put(key, value)?;
         }
+        self.sync_wal()?;
         Ok(())
     }
 

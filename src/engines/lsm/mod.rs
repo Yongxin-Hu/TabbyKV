@@ -1,6 +1,6 @@
 mod mem_table;
 mod wal;
-mod storage;
+pub mod storage;
 mod table;
 mod compact;
 mod iterators;

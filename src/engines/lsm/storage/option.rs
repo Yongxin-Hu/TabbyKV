@@ -1,4 +1,4 @@
-use crate::engines::lsm::compact::CompactionOptions;
+use crate::engines::lsm::compact::{LeveledCompactionOptions, SimpleLeveledCompactionOptions, TieredCompactionOptions};
 
 pub struct LsmStorageOptions {
     // Block 大小 (Byte)
@@ -8,7 +8,20 @@ pub struct LsmStorageOptions {
     // 内存中的 memtable 的数量限制(activate+read_only)
     pub num_memtable_limit: usize,
     pub compaction_options: CompactionOptions,
+    // 是否启用 WAL
     pub enable_wal: bool,
+}
+
+impl Default for LsmStorageOptions{
+    fn default() -> Self {
+        LsmStorageOptions {
+            block_size: 4096,   // 4M
+            target_sst_size: 2 << 20,   // 2M
+            num_memtable_limit: 100,
+            compaction_options: Default::default(),
+            enable_wal: true
+        }
+    }
 }
 
 impl LsmStorageOptions {
@@ -40,5 +53,28 @@ impl LsmStorageOptions {
             enable_wal: false,
             num_memtable_limit: 2,
         }
+    }
+}
+
+#[derive(Clone)]
+pub enum CompactionOptions {
+    /// Leveled compaction with partial compaction + dynamic level support (= RocksDB's Leveled
+    /// Compaction)
+    Leveled(LeveledCompactionOptions),
+    /// Tiered compaction (= RocksDB's universal compaction)
+    Tiered(TieredCompactionOptions),
+    /// Simple leveled compaction
+    Simple(SimpleLeveledCompactionOptions),
+    /// 仅 flush 到 L0 层
+    NoCompaction,
+}
+
+impl Default for CompactionOptions {
+    fn default() -> Self {
+        CompactionOptions::Simple(SimpleLeveledCompactionOptions{
+            size_ratio_percent: 10,
+            level0_file_num_compaction_trigger: 10,
+            max_levels: 7
+        })
     }
 }

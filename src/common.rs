@@ -2,7 +2,7 @@ use std::time::Duration;
 use log::error;
 use thiserror::Error;
 use serde::{Serialize, Deserialize};
-
+use anyhow::{Error, Result};
 
 /// Request
 #[derive(Debug,Serialize, Deserialize)]
@@ -11,11 +11,18 @@ pub struct Request{
     pub meta: MetaData
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Code{
+    OK,
+    Err
+}
+
 /// Response
 #[derive(Debug,Serialize, Deserialize)]
 pub struct Response{
+    pub code: Code,
     pub message: String,
-    pub value: Result<ValueObject, OpsError>
+    pub value: ValueObject,
 }
 
 /// Client command
@@ -29,6 +36,7 @@ pub enum Command {
 
 #[derive(Debug,Serialize, Deserialize)]
 pub enum Value{
+    Empty,
     VString(String),
     VList(Vec<String>),
 }

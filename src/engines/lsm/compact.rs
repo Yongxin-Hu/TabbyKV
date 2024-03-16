@@ -21,6 +21,7 @@ use crate::engines::lsm::iterators::StorageIterator;
 use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::engines::lsm::manifest::ManifestRecord;
 use crate::engines::lsm::storage::LsmStorageInner;
+use crate::engines::lsm::storage::option::CompactionOptions;
 use crate::engines::lsm::storage::state::LsmStorageState;
 use crate::engines::lsm::table::builder::SsTableBuilder;
 use crate::engines::lsm::table::iterator::SsTableIterator;
@@ -100,19 +101,6 @@ impl CompactionController {
             false
         }
     }
-}
-
-#[derive(Clone)]
-pub enum CompactionOptions {
-    /// Leveled compaction with partial compaction + dynamic level support (= RocksDB's Leveled
-    /// Compaction)
-    Leveled(LeveledCompactionOptions),
-    /// Tiered compaction (= RocksDB's universal compaction)
-    Tiered(TieredCompactionOptions),
-    /// Simple leveled compaction
-    Simple(SimpleLeveledCompactionOptions),
-    /// 仅 flush 到 L0 层
-    NoCompaction,
 }
 
 impl LsmStorageInner {

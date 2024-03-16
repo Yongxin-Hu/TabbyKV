@@ -2,8 +2,9 @@ use std::sync::{Arc};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use crate::common::{Command, MetaData, OpsError, Request, Response, Value, ValueObject};
+use crate::common::{Code, Command, MetaData, OpsError, Request, Response, Value, ValueObject};
 use crate::engines::Engine;
+use anyhow::{Error, Result};
 
 #[derive(Clone)]
 pub struct Server<E: Engine>{
@@ -17,7 +18,7 @@ impl<E: Clone+Engine+Send + 'static> Server<E> {
         }
     }
 
-    pub async fn run(&mut self, host: &String, port: &String) -> Result<Response, OpsError>{
+    pub async fn run(&mut self, host: &String, port: &String) -> Result<Response>{
         let listener = TcpListener::bind(format!("{}:{}", host, port))
             .await.unwrap();
         let server = Arc::new(Mutex::new(self.clone()));
@@ -43,14 +44,15 @@ impl<E: Clone+Engine+Send + 'static> Server<E> {
                     match inner_server.process(command) {
                         Ok((message, value)) => {
                             let response = Response{
+                                code: Code::OK,
                                 message,
-                                value: Ok(ValueObject{
+                                value: ValueObject{
                                     value,
                                     meta: MetaData {
                                         timestamp: 0,
                                         expire: None,
                                     },
-                                }),
+                                },
                             };
                             let response = serde_json::to_string(&response).expect("Serde json error!");
                             let _ = writer.write(format!("{response}\n").as_bytes()).await;
@@ -58,8 +60,15 @@ impl<E: Clone+Engine+Send + 'static> Server<E> {
                         }
                         Err(e) => {
                             let response = Response {
+                                code: Code::Err,
                                 message: e.to_string(),
-                                value: Err(e)
+                                value: ValueObject{
+                                    value: Value::Empty,
+                                    meta: MetaData {
+                                        timestamp: 0,
+                                        expire: None,
+                                    },
+                                },
                             };
                             let response = serde_json::to_string(&response).expect("Serde json error!");
                             let _ = writer.write(format!("{response}\n").as_bytes()).await;
@@ -72,30 +81,28 @@ impl<E: Clone+Engine+Send + 'static> Server<E> {
         }
     }
 
-    fn process(&mut self, command: Command) -> Result<(String, Value), OpsError>{
+    fn process(&mut self, command: Command) -> Result<(String, Value)>{
         match command{
             Command::Get(key) => {
-                let value = self.engine.get(&key);
+                let value = self.engine.get(&key)?;
                 match value{
                     Some(s) => Ok((s.to_owned(), Value::VString(s.clone()))),
-                    None => Err(OpsError::KeyNotFound),
+                    None => Err(OpsError::KeyNotFound.into()),
                 }
             },
             Command::Set(key,value) => {
-                let old_value = self.engine.set(key,value);
-                match old_value {
-                    Some(s) => Ok(("Ok".to_string(), Value::VString(s))),
-                    None => Ok(("Ok".to_string(), Value::VString(String::new())))
-                }
+                self.engine.put(key,value)?;
+                Ok(("Ok".to_string(), Value::Empty))
             },
             Command::Remove(key) => {
-                let old_value = self.engine.remove(&key);
-                match old_value {
-                    Some(s) => Ok(("Ok".to_string(), Value::VString(s))),
-                    None => Err(OpsError::KeyNotFound),
-                }
+                self.engine.delete(&key)?;
+                Ok(("Ok".to_string(), Value::Empty))
             },
-            _ => {Err(OpsError::EmptyCommand)}
+            _ => {Err(OpsError::EmptyCommand.into())}
         }
+    }
+
+    pub fn close(&self) -> Result<()> {
+        self.engine.close()
     }
 }
