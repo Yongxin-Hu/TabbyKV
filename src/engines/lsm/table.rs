@@ -40,6 +40,7 @@ impl BlockMeta {
             // last_key
             buf.put_slice(meta.last_key.as_ref());
         }
+        println!("encode_to_buf checksum len: {}", &buf[block_meta_start+4/* no of blocks */..].len());
         // check sum
         buf.put_u32(crc32fast::hash(&buf[block_meta_start+4/* no of blocks */..]));
     }
@@ -47,6 +48,7 @@ impl BlockMeta {
     pub fn decode_from_buf(mut buf: &[u8]) -> Result<Vec<BlockMeta>>{
         let block_num = buf.get_u32() as usize;
         let mut metas = Vec::with_capacity(block_num);
+        println!("decode_from_buf checksum len: {}", &buf[..buf.remaining() - 4].len());
         let checksum = crc32fast::hash(&buf[..buf.remaining() - 4]);
         for i in 0..block_num{
             let offset = buf.get_u32() as usize;
@@ -119,10 +121,11 @@ impl SsTable {
         let len = file.size();
         let bloom_filter_offset = (&file.read(len-4, 4).unwrap()[..]).get_u32() as u64;
 
-        let buf = file.read(bloom_filter_offset, file.1-bloom_filter_offset-4)?;
+        let buf = file.read(bloom_filter_offset, file.1-bloom_filter_offset-4/* bloom_filter_offset */)?;
         let bloom_filter = BloomFilter::decode_from_buf(&buf)?;
         let block_meta_offset = (&file.read(bloom_filter_offset-4, 4).unwrap()[..]).get_u32() as u64;
-        let buf = file.read(block_meta_offset, file.1-block_meta_offset-4)?;
+        let block_meta_data_len = file.1-block_meta_offset-4/* block_meta_offset */-(file.1-bloom_filter_offset) /*bloom filter data*/;
+        let buf = file.read(block_meta_offset, block_meta_data_len)?;
         let block_meta = BlockMeta::decode_from_buf(&buf)?;
         let first_key = block_meta.get(0).unwrap().first_key.clone();
         let last_key = block_meta.get(block_meta.len()-1).unwrap().last_key.clone();

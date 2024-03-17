@@ -87,6 +87,9 @@ impl SsTableBuilder{
         //                      SSTable 数据布局
         // [   Block Section  ][        Meta Section         ]
         // [block1, block2,...][[block_meta1, block_meta2,...],block_meta_offset(u32),bloom_filter, bloom_filter_offset(u32)]
+        //        ^                         ^                                              ^
+        //        |                         |                                              |
+        //   complete_block        BlockMeta::encode_to_buf                       bloom_filter.encode_to_buf
         let block_meta_offset = self.data.len();
         BlockMeta::encode_to_buf(self.meta.as_slice(), &mut self.data);
         self.data.put_u32(block_meta_offset as u32);
