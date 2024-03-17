@@ -75,6 +75,9 @@ impl SsTableBuilder{
     }
 
     /// 构建 sstable
+    /// # 参数
+    /// * id: sstable 的 id
+    /// * path: id.sst
     pub fn build(
         mut self,
         id: usize,

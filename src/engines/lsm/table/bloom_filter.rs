@@ -62,7 +62,7 @@ impl BloomFilter{
         }
     }
 
-    // 对 key 做 hash 后将对应的bit位设置为1
+    /// 对 key 做 hash 后将对应的bit位设置为1
     pub fn add(&mut self, key: &[u8]) {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
@@ -91,22 +91,26 @@ impl BloomFilter{
     }
 
     pub fn encode_to_buf(&self, buf: &mut Vec<u8>) {
+        let bloom_offset = buf.len();
         // 放置容量
         buf.put_u32(self.cap);
         // 放置哈希函数数量
         buf.put_u8(self.k);
-        // TODO 这里有没有不用 clone 的方法
         buf.extend_from_slice(self.bit_vec.clone().into_vec().as_slice());
+        let checksum = crc32fast::hash(&buf[bloom_offset..]);
+        buf.put_u32(checksum);
     }
 
     pub fn decode_from_buf(buf: &[u8]) -> Result<Self> {
         // 读取容量
         let cap: u32 = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
-
+        //let cap = (&buf[0..4]).get_u32();
         // 读取哈希函数数量
         let k: u8 = buf[4];
-
-        let bit_vec = BitVec::from_slice(&buf[5..]);
+        let data_end = buf.len() - 4;
+        let bit_vec = BitVec::from_slice(&buf[5..data_end]);
+        let checksum = (&buf[data_end..]).get_u32();
+        assert_eq!(checksum, crc32fast::hash(&buf[..data_end]), "bloom filter checksum mismatched!");
 
         // 返回解码后的 BloomFilter
         Ok(BloomFilter {

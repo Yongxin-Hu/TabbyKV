@@ -74,9 +74,9 @@ impl SimpleLeveledCompactionController {
 
     /// 应用合并的结果，修改 l0_sstable 和 level
     /// # 参数
-    /// * `snapshot` state快照
-    /// * `task` SimpleLeveledCompactionTask
-    /// * `output` compaction 后生成的 sst_ids
+    /// * `snapshot`: state快照
+    /// * `task`: SimpleLeveledCompactionTask
+    /// * `output`: compaction 后生成的 sst_ids
     /// # 返回值
     /// (LsmStorageState, Vec<usize>) : 修改后的state, 需要移除的 sst_ids
     pub fn apply_compaction_result(

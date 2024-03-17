@@ -150,7 +150,7 @@ impl LsmStorageInner {
         Ok(sst)
     }
 
-    // 根据 CompactionTask 执行 compact, 返回新生成的 sstables
+    /// 根据 CompactionTask 执行 compact, 返回新生成的 sstables
     fn compact(&self, task: &CompactionTask) -> Result<Vec<Arc<SsTable>>> {
         let snapshot = {
             let guard = self.state.read();
@@ -221,6 +221,7 @@ impl LsmStorageInner {
         }
     }
 
+    ///
     pub fn force_full_compaction(&self) -> Result<()> {
         let snapshot = {
             let guard = self.state.read();
