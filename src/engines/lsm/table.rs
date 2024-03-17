@@ -25,6 +25,8 @@ pub struct BlockMeta {
 
 impl BlockMeta {
     pub fn encode_to_buf(block_meta: &[BlockMeta], buf: &mut Vec<u8>) {
+        let block_meta_start = buf.len();
+        // no of blocks
         buf.put_u32(block_meta.len() as u32);
         for meta in block_meta {
             // offset
@@ -38,11 +40,14 @@ impl BlockMeta {
             // last_key
             buf.put_slice(meta.last_key.as_ref());
         }
+        // check sum
+        buf.put_u32(crc32fast::hash(&buf[block_meta_start+4/* no of blocks */..]));
     }
 
     pub fn decode_from_buf(mut buf: &[u8]) -> Result<Vec<BlockMeta>>{
         let block_num = buf.get_u32() as usize;
         let mut metas = Vec::with_capacity(block_num);
+        let checksum = crc32fast::hash(&buf[..buf.remaining() - 4]);
         for i in 0..block_num{
             let offset = buf.get_u32() as usize;
             let first_key_len = buf.get_u16() as usize;
@@ -55,6 +60,8 @@ impl BlockMeta {
                 last_key
             })
         }
+        // checksum
+        assert_eq!(buf.get_u32(), checksum, "meta checksum mismatched!");
         Ok(metas)
     }
 }
