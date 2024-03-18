@@ -17,7 +17,7 @@ impl SsTableIterator {
         let first_block = table.read_block(0)?;
         Ok(SsTableIterator{
             table: Arc::clone(&table),
-            block_iterator: BlockIterator::create_and_seek_to_first(first_block),
+            block_iterator: BlockIterator::create_and_move_to_first(first_block),
             block_index: 0
         })
     }
@@ -26,19 +26,19 @@ impl SsTableIterator {
     pub fn seek_to_first(&mut self) -> Result<()> {
         let first_block = self.table.read_block(0)?;
         self.block_index = 0;
-        self.block_iterator = BlockIterator::create_and_seek_to_first(first_block);
+        self.block_iterator = BlockIterator::create_and_move_to_first(first_block);
         Ok(())
     }
 
     fn seek_to_key_inner(table: &Arc<SsTable>, key: Bytes) -> Result<(usize, BlockIterator)> {
         let mut block_idx = table.find_block_idx(key.clone());
         let mut block = table.read_block(block_idx)?;
-        let mut block_iterator = BlockIterator::create_and_seek_to_key(block, key.as_ref());
+        let mut block_iterator = BlockIterator::create_and_move_to_key(block, key.as_ref());
         if !block_iterator.is_valid() {
             block_idx += 1;
             if block_idx < table.num_of_blocks() {
                 block = table.read_block(block_idx)?;
-                block_iterator = BlockIterator::create_and_seek_to_key(block, key.as_ref());
+                block_iterator = BlockIterator::create_and_move_to_key(block, key.as_ref());
             }
         }
         Ok((block_idx, block_iterator))
@@ -82,7 +82,7 @@ impl StorageIterator for SsTableIterator {
             self.block_index += 1;
             if self.block_index < self.table.num_of_blocks() {
                 let block = self.table.read_block(self.block_index)?;
-                self.block_iterator = BlockIterator::create_and_seek_to_first(block);
+                self.block_iterator = BlockIterator::create_and_move_to_first(block);
             }
         }
         Ok(())

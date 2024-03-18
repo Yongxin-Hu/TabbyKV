@@ -1,48 +1,82 @@
 use bytes::BufMut;
+use structopt::lazy_static::lazy_static;
 use crate::engines::lsm::block::Block;
+use crate::engines::lsm::key::{KeySlice, KeyVec};
 
 const SIZEOF_U16: usize = std::mem::size_of::<u16>();
 
 pub struct BlockBuilder {
     /// 每个 kv-pair 的 offset
     offsets: Vec<u16>,
-    /// [key_len(2byte), key , value_len(2byte), value]
+    /// [key_overlap_len(u16), rest_key_len(u16),key(rest_key_len), value_len(u16), value]
+    /// 由于 block 内部的 key 是有序排列的，
+    /// 使用 key_overlap_len 记录 key和 block 的 first_key 重合的长度来减少重复记录前缀
     data: Vec<u8>,
     /// Block大小(Byte)
-    block_size: usize
+    block_size: usize,
+    /// First Key
+    first_key: Vec<u8>
 }
 
 impl BlockBuilder {
     /// 创建 BlockBuilder
+    /// # 参数
+    /// * `block_size`: Block大小(Byte)
     pub fn new(block_size: usize) -> Self {
         BlockBuilder{
             offsets: Vec::new(),
             data: Vec::new(),
-            block_size
+            block_size,
+            first_key: Vec::new()
         }
+    }
+
+    /// 计算 key 和 first_key 重叠的 byte 数
+    /// # 参数
+    /// * `first_key`: block first key
+    /// * `key`: key
+    /// # 返回值
+    /// * 重叠的 byte 数
+    fn calc_overlap(first_key: &[u8], key: &[u8]) -> usize {
+        let mut index = 0;
+        loop {
+            if index >= first_key.len() || index >= key.len(){
+                break;
+            }
+            if first_key[index] != key[index]{
+                break;
+            }
+            index += 1;
+        }
+        index
     }
 
     /// 将 kv-pair 添加到块中。当 Block 已满时返回 false
     /// # 参数
-    /// * key key
-    /// * value value
+    /// * key: key
+    /// * value: value
     /// # 返回值
-    /// true 添加成功
-    /// false 添加失败
+    /// true: 添加成功 false: 添加失败
     #[must_use]
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
         assert!(!key.is_empty(), "key must not be empty");
 
-        if self.check_size(key, value) || self.is_empty() /* 允许放入的第一个 kv-pair 超过block_size */{
+        if self.check_size(key, value) || self.is_empty() /* 允许放入的第一个 kv-pair 超过 block_size */{
             self.offsets.push(self.data.len() as u16);
-            // key_len
-            self.data.put_u16(key.len() as u16);
-            // key
-            self.data.put(key);
+            let key_overlap_len = Self::calc_overlap(self.first_key.as_slice(), key);
+            // key_overlap_len
+            self.data.put_u16(key_overlap_len as u16);
+            // rest_key_len
+            self.data.put_u16((key.len() - key_overlap_len) as u16);
+            // rest_key
+            self.data.put(&key[key_overlap_len..]);
             // value_len
             self.data.put_u16(value.len() as u16);
             // value
             self.data.put(value);
+            if self.first_key.is_empty() {
+                self.first_key = key.to_vec();
+            }
             return true;
         }
         false

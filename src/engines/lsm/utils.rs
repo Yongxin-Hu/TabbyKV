@@ -7,6 +7,7 @@ use crate::engines::lsm::storage::LsmStorageInner;
 use crate::engines::lsm::storage::state::LsmStorageState;
 use crate::engines::lsm::table::iterator::SsTableIterator;
 
+#[inline]
 pub(crate) fn map_bound(bound: Bound<&[u8]>) -> Bound<Bytes> {
     match bound {
         Bound::Included(x) => Bound::Included(Bytes::copy_from_slice(x)),

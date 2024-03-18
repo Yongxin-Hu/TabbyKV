@@ -6,7 +6,7 @@ pub struct BlockIterator {
     block: Arc<Block>,
     /// 当前 key ，空表示迭代器无效
     key: Bytes,
-    /// the value range from the block
+    /// 当前 value 在 block 中的范围
     value_range: (usize, usize),
     /// 当前 kv-pair 的索引， 范围在[0, num_of_element)
     idx: usize,
@@ -17,6 +17,7 @@ pub struct BlockIterator {
 impl Block {
     fn get_first_key(&self) -> &[u8] {
         let mut buf = &self.data[..];
+        buf.get_u16();
         let key_len = buf.get_u16();
         let key = &buf[..key_len as usize];
         key
@@ -37,27 +38,27 @@ impl BlockIterator{
         }
     }
 
-    // 创建 BlockIterator 并且定位到第一个 kv-pair
-    pub fn create_and_seek_to_first(block: Arc<Block>) -> Self {
+    // 创建 BlockIterator 并且移动到第一个 kv-pair
+    pub fn create_and_move_to_first(block: Arc<Block>) -> Self {
         let mut iter = BlockIterator::new(block);
-        iter.seek_to_first();
+        iter.move_to_first();
         iter
     }
 
-    /// 创建 BlockIterator 并且定位到第一个 key >= `key`
-    pub fn create_and_seek_to_key(block: Arc<Block>, key: &[u8]) -> Self {
+    /// 创建 BlockIterator 并且移动到第一个 key >= `key`
+    pub fn create_and_move_to_key(block: Arc<Block>, key: &[u8]) -> Self {
         let mut iter = BlockIterator::new(block);
-        iter.seek_to_key(key);
+        iter.move_to_key(key);
         iter
     }
 
-    // 返回当前的 key
+    /// 返回当前的 key
     pub fn key(&self) -> &[u8] {
         assert!(!self.key.is_empty(), "invalid iterator, key must not empty");
         self.key.as_ref()
     }
 
-    // 返回当前的 value
+    /// 返回当前的 value
     pub fn value(&self) -> &[u8] {
         assert!(!self.key.is_empty(), "invalid iterator, key must not empty");
         &self.block.data[self.value_range.0..self.value_range.1]
@@ -68,24 +69,24 @@ impl BlockIterator{
         !self.key.is_empty()
     }
 
-    // 定位到第一个 kv-pair
-    pub fn seek_to_first(&mut self) {
-        self.seek_to(0);
+    /// 移动到第一个 kv-pair
+    pub fn move_to_first(&mut self) {
+        self.move_to(0);
     }
 
-    // 移动到下一个 kv-pair
+    /// 移动到下一个 kv-pair
     pub fn next(&mut self) {
         let next_index = self.idx + 1;
-        self.seek_to(next_index);
+        self.move_to(next_index);
     }
 
-    // 定位到第一个 key >= `key`
-    pub fn seek_to_key(&mut self, key: &[u8]) {
+    /// 移动到第一个 key >= `key`
+    pub fn move_to_key(&mut self, key: &[u8]) {
         let mut low = 0;
         let mut high = self.block.offsets.len();
         while low < high {
             let mid = low + (high - low) / 2;
-            self.seek_to(mid);
+            self.move_to(mid);
             assert!(self.is_valid());
             match self.key().cmp(&key) {
                 std::cmp::Ordering::Less => low = mid + 1,
@@ -93,11 +94,11 @@ impl BlockIterator{
                 std::cmp::Ordering::Equal => return,
             }
         }
-        self.seek_to(low);
+        self.move_to(low);
     }
 
-    // 定位到第 index 个 kv-pair
-    fn seek_to(&mut self, index: usize){
+    /// 移动到第 index 个 kv-pair
+    fn move_to(&mut self, index: usize){
 
         if index >= self.block.offsets.len() {
             self.key.clear();
@@ -107,17 +108,22 @@ impl BlockIterator{
 
         let offset = self.block.offsets[index] as usize;
         let mut data = &self.block.data[offset..];
-        // Key
-        let key_len = data.get_u16() as usize;
-        let key = &data[..key_len];
+
+        // rest key
+        let key_overlap_len = data.get_u16() as usize;
+        let rest_key_len = data.get_u16() as usize;
+        let rest_key = &data[..rest_key_len];
+        data.advance(rest_key_len);
         // value
-        data.advance(key_len);
         let value_len = data.get_u16() as usize;
-        let value_start = offset + SIZEOF_U16/* key_len */ + key_len /* key */ + SIZEOF_U16/* value_len */;
+        let value_start = offset + 2 * SIZEOF_U16/* key_overlap_len+rest_key_len */
+            + rest_key_len /* rest_key */ + SIZEOF_U16/* value_len */;
         let value_end = value_start + value_len;
 
         self.idx = index;
-        self.key = Bytes::copy_from_slice(key);
+        let mut key = self.first_key.as_ref()[..key_overlap_len].to_vec();
+        key.extend_from_slice(rest_key);
+        self.key = Bytes::from(key);
         self.value_range = (value_start, value_end);
     }
 }
@@ -169,7 +175,7 @@ mod test{
     #[test]
     fn test_block_iterator() {
         let block = Arc::new(generate_block());
-        let mut iter = BlockIterator::create_and_seek_to_first(block);
+        let mut iter = BlockIterator::create_and_move_to_first(block);
 
         for _ in 0..5 {
             for i in 0..100 {
@@ -191,7 +197,7 @@ mod test{
                 );
                 iter.next();
             }
-            iter.seek_to_first();
+            iter.move_to_first();
         }
     }
 
@@ -203,7 +209,7 @@ mod test{
         let block = block_builder.build();
         let encoded = block.encode();
         let decoded_block = Block::decode(&encoded);
-        let mut block_iterator = BlockIterator::create_and_seek_to_first(Arc::new(decoded_block));
+        let mut block_iterator = BlockIterator::create_and_move_to_first(Arc::new(decoded_block));
         assert_eq!(block_iterator.key(), b"key1");
         block_iterator.next();
         assert_eq!(block_iterator.key(), b"key2");
@@ -213,7 +219,7 @@ mod test{
     #[test]
     fn test_block_seek_key() {
         let block = Arc::new(generate_block());
-        let mut iter = BlockIterator::create_and_seek_to_key(block, key_of(0).as_slice());
+        let mut iter = BlockIterator::create_and_move_to_key(block, key_of(0).as_slice());
         for offset in 1..=5 {
             for i in 0..num_of_keys() {
                 let key = iter.key();
@@ -232,9 +238,9 @@ mod test{
                     as_bytes(&value_of(i)),
                     as_bytes(value)
                 );
-                iter.seek_to_key(&format!("key_{:03}", i * 5 + offset).into_bytes());
+                iter.move_to_key(&format!("key_{:03}", i * 5 + offset).into_bytes());
             }
-            iter.seek_to_key(b"k");
+            iter.move_to_key(b"k");
         }
     }
 }
