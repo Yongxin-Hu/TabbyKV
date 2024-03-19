@@ -1,7 +1,5 @@
 use bytes::BufMut;
-use structopt::lazy_static::lazy_static;
 use crate::engines::lsm::block::Block;
-use crate::engines::lsm::key::{KeySlice, KeyVec};
 
 const SIZEOF_U16: usize = std::mem::size_of::<u16>();
 
