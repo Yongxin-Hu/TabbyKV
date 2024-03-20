@@ -134,7 +134,7 @@ impl LsmStorageInner {
                 let builder = sst_builder.take().unwrap();
                 sst.push(
                     Arc::new(builder.build(
-                        sst_id, self.path_of_sst(sst_id)
+                        sst_id, Some(self.block_cache.clone()),self.path_of_sst(sst_id)
                     )?)
                 )
             }
@@ -143,7 +143,7 @@ impl LsmStorageInner {
             let sst_id = self.next_sst_id();
             sst.push(
                 Arc::new(builder.build(
-                    sst_id, self.path_of_sst(sst_id)
+                    sst_id, Some(self.block_cache.clone()), self.path_of_sst(sst_id)
                 )?)
             )
         }

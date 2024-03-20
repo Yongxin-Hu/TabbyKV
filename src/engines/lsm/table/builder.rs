@@ -1,8 +1,10 @@
 use std::path::Path;
+use std::sync::Arc;
 use bytes::{BufMut, Bytes};
 use crate::engines::lsm::block::builder::BlockBuilder;
 use crate::engines::lsm::table::{BlockMeta, FileObject, SsTable};
 use anyhow::Result;
+use crate::engines::lsm::storage::BlockCache;
 use crate::engines::lsm::table::bloom_filter::BloomFilter;
 
 pub struct SsTableBuilder {
@@ -81,6 +83,7 @@ impl SsTableBuilder{
     pub fn build(
         mut self,
         id: usize,
+        block_cache: Option<Arc<BlockCache>>,
         path: impl AsRef<Path>,
     ) -> Result<SsTable> {
         self.complete_block();
@@ -103,6 +106,7 @@ impl SsTableBuilder{
             last_key: self.meta.last().unwrap().last_key.clone(),
             block_meta: self.meta,
             block_meta_offset,
+            block_cache,
             file,
             bloom_filter: self.bloom_filter
         })
@@ -120,7 +124,7 @@ mod test {
         let mut sstable_builder = SsTableBuilder::new(16);
         sstable_builder.add(b"key1", b"value1");
         let path = dir.path().join("1.sst");
-        let sst = sstable_builder.build(0, path).unwrap();
+        let sst = sstable_builder.build(0, None, path).unwrap();
     }
 
     #[test]
@@ -135,6 +139,6 @@ mod test {
         assert!(builder.meta.len() >= 2);
         let mut dir = tempdir().unwrap();
         let path = dir.path().join("1.sst");
-        let sst = builder.build(0, path).unwrap();
+        let sst = builder.build(0, None, path).unwrap();
     }
 }

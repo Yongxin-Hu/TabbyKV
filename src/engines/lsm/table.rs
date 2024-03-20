@@ -10,9 +10,10 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bytes::{Buf, BufMut, Bytes};
 use crate::engines::lsm::block::Block;
+use crate::engines::lsm::storage::BlockCache;
 use crate::engines::lsm::table::bloom_filter::BloomFilter;
 
 // Block元信息
@@ -109,12 +110,13 @@ pub struct SsTable {
     id: usize,
     first_key: Bytes,
     last_key: Bytes,
+    block_cache: Option<Arc<BlockCache>>,
     pub(crate) bloom_filter: BloomFilter
 }
 
 impl SsTable {
     // 打开一个 sstable
-    pub fn open(id: usize, file: FileObject) -> Result<Self> {
+    pub fn open(id: usize, block_cache: Option<Arc<BlockCache>>, file: FileObject) -> Result<Self> {
         //                      SSTable 数据布局
         // [   Block Section  ][        Meta Section         ]
         // [block1, block2,...][[block_meta1, block_meta2,...],block_meta_offset(u32),bloom_filter, bloom_filter_offset(u32)]
@@ -136,6 +138,7 @@ impl SsTable {
             id,
             first_key,
             last_key,
+            block_cache,
             bloom_filter
         })
     }
@@ -153,6 +156,20 @@ impl SsTable {
         let checksum = (&data[data.len()-4..]).get_u32();
         assert_eq!(checksum, crc32fast::hash(block_data), "block checksum mismatched!");
         Ok(Arc::new(Block::decode(block_data)))
+    }
+
+    /// 获取 sstable 的第 index 个 Block,使用缓存
+    /// # 参数
+    /// * index: sstable 中 Block 的 index
+    pub fn read_block_with_cache(&self, index: usize) -> Result<Arc<Block>> {
+        if let Some(ref block_cache) = self.block_cache {
+            let blk = block_cache
+                .try_get_with((self.id, index), || self.read_block(index))
+                .map_err(|e| anyhow!("{}", e))?;
+            Ok(blk)
+        } else {
+            self.read_block(index)
+        }
     }
 
     // 找到一个可能包含 key 的 Block
@@ -235,7 +252,7 @@ mod test {
         }
         let dir = tempdir().unwrap();
         let path = dir.path().join("1.sst");
-        (dir, builder.build(0, path).unwrap())
+        (dir, builder.build(0, None, path).unwrap())
     }
 
     #[test]
@@ -247,7 +264,7 @@ mod test {
     fn test_sst_decode() {
         let (_dir, sst) = generate_sst();
         let meta = sst.block_meta.clone();
-        let new_sst = SsTable::open(0, sst.file).unwrap();
+        let new_sst = SsTable::open(0, None, sst.file).unwrap();
         assert_eq!(new_sst.block_meta, meta);
         assert_eq!(
             new_sst.first_key(),

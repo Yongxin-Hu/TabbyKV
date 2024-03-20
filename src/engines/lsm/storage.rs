@@ -15,6 +15,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use option::{CompactionOptions, LsmStorageOptions};
 use state::LsmStorageState;
+use crate::engines::lsm::block::Block;
 use crate::engines::lsm::iterators::concat_iterator::SstConcatIterator;
 use crate::engines::lsm::iterators::fused_iterator::FusedIterator;
 use crate::engines::lsm::iterators::lsm_iterator::LsmIterator;
@@ -27,6 +28,8 @@ use crate::engines::lsm::table::iterator::SsTableIterator;
 use crate::engines::lsm::table::{FileObject, SsTable};
 use crate::engines::lsm::utils::map_bound;
 
+/// (sst_id, block_index)
+pub type BlockCache = moka::sync::Cache<(usize, usize), Arc<Block>>;
 
 pub struct LsmStorage{
     pub(crate) inner: Arc<LsmStorageInner>,
@@ -138,6 +141,7 @@ pub struct LsmStorageInner {
     pub(crate) state_lock: Mutex<()>,
     path: PathBuf,
     next_sst_id: AtomicUsize,
+    pub(crate) block_cache: Arc<BlockCache>,
     pub(crate) options: Arc<LsmStorageOptions>,
     pub(crate) manifest: Option<Manifest>,
     pub(crate) compaction_controller: CompactionController,
@@ -188,6 +192,7 @@ impl LsmStorageInner{
     pub(crate) fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Self>{
         let path = path.as_ref();
         let mut state = LsmStorageState::create(&options);
+        let block_cache = Arc::new(BlockCache::new(1 << 20)); // 4GB block cache,
         let mut next_sst_id = 1usize;
         let compaction_controller = match &options.compaction_options {
             CompactionOptions::Leveled(options) => {
@@ -238,6 +243,7 @@ impl LsmStorageInner{
                 let sst_id = *sst_id;
                 let sst = SsTable::open(
                     sst_id,
+                    Some(block_cache.clone()),
                     FileObject::open(Self::path_of_sst_static(path, sst_id).as_path())?
                 )?;
                 state.sstables.insert(sst_id, Arc::new(sst));
@@ -280,6 +286,7 @@ impl LsmStorageInner{
             path: path.to_path_buf(),
             next_sst_id: AtomicUsize::new(next_sst_id),
             compaction_controller,
+            block_cache,
             options: options.into(),
             manifest: Some(manifest)
         };
@@ -525,7 +532,8 @@ impl LsmStorageInner{
         let mut ss_table_builder = SsTableBuilder::new(self.options.block_size);
         earliest_memtable.flush(&mut ss_table_builder)?;
         let sst_id = earliest_memtable.id();
-        let sstable = Arc::new(ss_table_builder.build(sst_id, self.path_of_sst(sst_id))?);
+        let sstable = Arc::new(ss_table_builder.build(
+            sst_id, Some(self.block_cache.clone()),self.path_of_sst(sst_id))?);
         {
             let mut guard = self.state.write();
             let mut snapshot = guard.as_ref().clone();
@@ -783,7 +791,7 @@ mod test{
         for (key, value) in data {
             builder.add(&key[..], &value[..]);
         }
-        builder.build(id, path.as_ref()).unwrap()
+        builder.build(id, None, path.as_ref()).unwrap()
     }
 
     #[test]
@@ -1098,7 +1106,7 @@ mod test{
             );
         }
         let path = dir.as_ref().join(format!("{id}.sst"));
-        builder.build(0, path).unwrap()
+        builder.build(0, None, path).unwrap()
     }
 
     #[test]
