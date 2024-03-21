@@ -1,5 +1,6 @@
 use bytes::BufMut;
 use crate::engines::lsm::block::Block;
+use crate::engines::lsm::key::{KeySlice, KeyVec};
 
 const SIZEOF_U16: usize = std::mem::size_of::<u16>();
 
@@ -13,7 +14,7 @@ pub struct BlockBuilder {
     /// Block大小(Byte)
     block_size: usize,
     /// First Key
-    first_key: Vec<u8>
+    first_key: KeyVec
 }
 
 impl BlockBuilder {
@@ -25,7 +26,7 @@ impl BlockBuilder {
             offsets: Vec::new(),
             data: Vec::new(),
             block_size,
-            first_key: Vec::new()
+            first_key: KeyVec::new()
         }
     }
 
@@ -35,13 +36,13 @@ impl BlockBuilder {
     /// * `key`: key
     /// # 返回值
     /// * 重叠的 byte 数
-    fn calc_overlap(first_key: &[u8], key: &[u8]) -> usize {
+    fn calc_overlap(first_key: KeySlice, key: KeySlice) -> usize {
         let mut index = 0;
         loop {
-            if index >= first_key.len() || index >= key.len(){
+            if index >= first_key.key_len() || index >= key.key_len(){
                 break;
             }
-            if first_key[index] != key[index]{
+            if first_key.key_ref()[index] != key.key_ref()[index]{
                 break;
             }
             index += 1;
@@ -56,24 +57,24 @@ impl BlockBuilder {
     /// # 返回值
     /// true: 添加成功 false: 添加失败
     #[must_use]
-    pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
+    pub fn add(&mut self, key: KeySlice, value: &[u8]) -> bool {
         assert!(!key.is_empty(), "key must not be empty");
 
         if self.check_size(key, value) || self.is_empty() /* 允许放入的第一个 kv-pair 超过 block_size */{
             self.offsets.push(self.data.len() as u16);
-            let key_overlap_len = Self::calc_overlap(self.first_key.as_slice(), key);
+            let key_overlap_len = Self::calc_overlap(self.first_key.as_key_slice(), key);
             // key_overlap_len
             self.data.put_u16(key_overlap_len as u16);
             // rest_key_len
-            self.data.put_u16((key.len() - key_overlap_len) as u16);
+            self.data.put_u16((key.key_len() - key_overlap_len) as u16);
             // rest_key
-            self.data.put(&key[key_overlap_len..]);
+            self.data.put(&key.key_ref()[key_overlap_len..]);
             // value_len
             self.data.put_u16(value.len() as u16);
             // value
             self.data.put(value);
             if self.first_key.is_empty() {
-                self.first_key = key.to_vec();
+                self.first_key = key.to_key_vec();
             }
             return true;
         }
@@ -81,11 +82,11 @@ impl BlockBuilder {
     }
 
     /// 检查加入 KV-Pair 后是否超出 block_size 大小
-    fn check_size(&mut self, key: &[u8], value: &[u8]) -> bool {
+    fn check_size(&mut self, key: KeySlice, value: &[u8]) -> bool {
         let prev_size = SIZEOF_U16 /* num_of_elements(2byte) */
             + self.offsets.len() * SIZEOF_U16 /* offset */
             + self.data.len() /* kv-pair */;
-        let new_size = SIZEOF_U16 * 3 /* key_len + value_len + offset */ + key.len() + value.len();
+        let new_size = SIZEOF_U16 * 3 /* key_len + value_len + offset */ + key.raw_len() + value.len();
         prev_size + new_size <= self.block_size
     }
 
@@ -110,34 +111,35 @@ impl BlockBuilder {
 mod test{
     use crate::engines::lsm::block::Block;
     use crate::engines::lsm::block::builder::BlockBuilder;
+    use crate::engines::lsm::key::KeySlice;
 
     #[test]
     fn test_block_builder_1(){
         let mut block_builder = BlockBuilder::new(16);
-        assert!(block_builder.add(b"key", b"value"));
+        assert!(block_builder.add(KeySlice::for_testing_from_slice_no_ts(b"key"), b"value"));
         block_builder.build();
     }
 
     #[test]
     fn test_block_build_full() {
         let mut builder = BlockBuilder::new(16);
-        assert!(builder.add(b"11", b"11"));
-        assert!(!builder.add(b"22", b"22"));
+        assert!(builder.add(KeySlice::for_testing_from_slice_no_ts(b"11"), b"11"));
+        assert!(!builder.add(KeySlice::for_testing_from_slice_no_ts(b"22"), b"22"));
         builder.build();
     }
 
     #[test]
     fn test_block_build_large_1() {
         let mut builder = BlockBuilder::new(16);
-        assert!(builder.add(b"11", &b"1".repeat(100)));
+        assert!(builder.add(KeySlice::for_testing_from_slice_no_ts(b"11"), &b"1".repeat(100)));
         builder.build();
     }
 
     #[test]
     fn test_block_build_large_2() {
         let mut builder = BlockBuilder::new(16);
-        assert!(builder.add(b"11", b"1"));
-        assert!(!builder.add(b"11", &b"1".repeat(100)));
+        assert!(builder.add(KeySlice::for_testing_from_slice_no_ts(b"11"), b"1"));
+        assert!(!builder.add(KeySlice::for_testing_from_slice_no_ts(b"11"), &b"1".repeat(100)));
     }
 
     fn key_of(idx: usize) -> Vec<u8> {
@@ -157,7 +159,10 @@ mod test{
         for idx in 0..num_of_keys() {
             let key = key_of(idx);
             let value = value_of(idx);
-            assert!(builder.add(&key[..], &value[..]));
+            assert!(builder.add(
+                KeySlice::for_testing_from_slice_no_ts(&key[..]),
+                &value[..]
+            ));
         }
         builder.build()
     }

@@ -41,7 +41,6 @@ impl BlockMeta {
             // last_key
             buf.put_slice(meta.last_key.as_ref());
         }
-        println!("encode_to_buf checksum len: {}", &buf[block_meta_start+4/* no of blocks */..].len());
         // check sum
         buf.put_u32(crc32fast::hash(&buf[block_meta_start+4/* no of blocks */..]));
     }
@@ -49,7 +48,6 @@ impl BlockMeta {
     pub fn decode_from_buf(mut buf: &[u8]) -> Result<Vec<BlockMeta>>{
         let block_num = buf.get_u32() as usize;
         let mut metas = Vec::with_capacity(block_num);
-        println!("decode_from_buf checksum len: {}", &buf[..buf.remaining() - 4].len());
         let checksum = crc32fast::hash(&buf[..buf.remaining() - 4]);
         for i in 0..block_num{
             let offset = buf.get_u32() as usize;

@@ -4,6 +4,7 @@ use bytes::{BufMut, Bytes};
 use crate::engines::lsm::block::builder::BlockBuilder;
 use crate::engines::lsm::table::{BlockMeta, FileObject, SsTable};
 use anyhow::Result;
+use crate::engines::lsm::key::KeySlice;
 use crate::engines::lsm::storage::BlockCache;
 use crate::engines::lsm::table::bloom_filter::BloomFilter;
 
@@ -44,7 +45,7 @@ impl SsTableBuilder{
             self.first_key = Bytes::copy_from_slice(key);
         }
 
-        if self.block_builder.add(key, value) {
+        if self.block_builder.add(KeySlice::for_testing_from_slice_no_ts(key), value) {
             self.last_key = Bytes::copy_from_slice(key);
             return;
         }else{
@@ -52,7 +53,7 @@ impl SsTableBuilder{
             self.complete_block();
         }
 
-        assert!(self.block_builder.add(key, value));
+        assert!(self.block_builder.add(KeySlice::for_testing_from_slice_no_ts(key), value));
         self.first_key = Bytes::copy_from_slice(key);
         self.last_key = Bytes::copy_from_slice(key);
     }

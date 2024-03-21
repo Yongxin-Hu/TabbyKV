@@ -1,26 +1,27 @@
 use std::sync::Arc;
 use bytes::{Buf, Bytes};
 use crate::engines::lsm::block::{Block, SIZEOF_U16};
+use crate::engines::lsm::key::KeyVec;
 
 pub struct BlockIterator {
     block: Arc<Block>,
     /// 当前 key ，空表示迭代器无效
-    key: Bytes,
+    key: KeyVec,
     /// 当前 value 在 block 中的范围
     value_range: (usize, usize),
     /// 当前 kv-pair 的索引， 范围在[0, num_of_element)
     idx: usize,
     /// block 中的 first_key
-    first_key: Bytes,
+    first_key: KeyVec,
 }
 
 impl Block {
-    fn get_first_key(&self) -> &[u8] {
+    fn get_first_key(&self) -> KeyVec {
         let mut buf = &self.data[..];
         buf.get_u16();
         let key_len = buf.get_u16();
         let key = &buf[..key_len as usize];
-        key
+        KeyVec::for_testing_from_vec_no_ts(key.to_vec())
     }
 }
 
@@ -28,10 +29,10 @@ impl Block {
 impl BlockIterator{
     // 创建 BlockIterator
     fn new(block: Arc<Block>) -> Self {
-        let first_key = Bytes::from(block.get_first_key().to_vec());
+        let first_key = block.get_first_key();
         BlockIterator {
             block,
-            key: Bytes::new(),
+            key: KeyVec::new(),
             value_range: (0, 0),
             idx: 0,
             first_key
@@ -55,7 +56,7 @@ impl BlockIterator{
     /// 返回当前的 key
     pub fn key(&self) -> &[u8] {
         assert!(!self.key.is_empty(), "invalid iterator, key must not empty");
-        self.key.as_ref()
+        self.key.key_ref()
     }
 
     /// 返回当前的 value
@@ -121,9 +122,9 @@ impl BlockIterator{
         let value_end = value_start + value_len;
 
         self.idx = index;
-        let mut key = self.first_key.as_ref()[..key_overlap_len].to_vec();
-        key.extend_from_slice(rest_key);
-        self.key = Bytes::from(key);
+        self.key.clear();
+        self.key.append(&self.first_key.key_ref()[..key_overlap_len]);
+        self.key.append(rest_key);
         self.value_range = (value_start, value_end);
     }
 }
@@ -135,14 +136,14 @@ mod test{
     use crate::engines::lsm::block::Block;
     use crate::engines::lsm::block::builder::BlockBuilder;
     use crate::engines::lsm::block::iterator::BlockIterator;
+    use crate::engines::lsm::key::KeySlice;
 
     #[test]
     fn test_get_first_key(){
         let mut block_builder = BlockBuilder::new(4*1024);
-        assert!(block_builder.add(b"hello", b"world"));
-        assert!(block_builder.add(b"hello2", b"world2"));
+        assert!(block_builder.add(KeySlice::for_testing_from_slice_no_ts(b"hello"), b"world"));
+        assert!(block_builder.add(KeySlice::for_testing_from_slice_no_ts(b"hello2"), b"world2"));
         let block = block_builder.build();
-        print!("{:?}", String::from_utf8(block.get_first_key().to_vec()));
     }
 
     fn as_bytes(x: &[u8]) -> Bytes {
@@ -166,7 +167,7 @@ mod test{
         for idx in 0..num_of_keys() {
             let key = key_of(idx);
             let value = value_of(idx);
-            assert!(builder.add(&key[..], &value[..]));
+            assert!(builder.add(KeySlice::for_testing_from_slice_no_ts(&key[..]), &value[..]));
         }
         builder.build()
     }
@@ -204,8 +205,8 @@ mod test{
     #[test]
     fn test_1() {
         let mut block_builder = BlockBuilder::new(10000);
-        assert!(block_builder.add(b"key1", b"value1"));
-        assert!(block_builder.add(b"key2", b"value2"));
+        assert!(block_builder.add(KeySlice::for_testing_from_slice_no_ts(b"key1"), b"value1"));
+        assert!(block_builder.add(KeySlice::for_testing_from_slice_no_ts(b"key2"), b"value2"));
         let block = block_builder.build();
         let encoded = block.encode();
         let decoded_block = Block::decode(&encoded);
