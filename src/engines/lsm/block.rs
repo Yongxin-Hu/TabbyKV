@@ -4,6 +4,7 @@ pub(crate) mod iterator;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 const SIZEOF_U16: usize = std::mem::size_of::<u16>();
+const SIZEOF_U64: usize = std::mem::size_of::<u64>();
 pub struct Block {
     pub(crate) data: Vec<u8>,
     pub(crate) offsets: Vec<u16>,

@@ -20,13 +20,19 @@ use crate::engines::lsm::table::bloom_filter::BloomFilter;
 // Block元信息
 #[derive(Clone, Debug, PartialEq)]
 pub struct BlockMeta {
+    /// Block 距离文件开始的 offset
     pub offset: usize,
+    /// Block 的 first_key
     pub first_key: KeyBytes,
+    /// Block 的 last_key
     pub last_key: KeyBytes
 }
 
 impl BlockMeta {
     pub fn encode_to_buf(block_meta: &[BlockMeta], buf: &mut Vec<u8>) {
+        let estimated_size = Self::estimate_size(block_meta);
+        // 预留足够大小
+        buf.reserve(estimated_size);
         let block_meta_start = buf.len();
         // no of blocks
         buf.put_u32(block_meta.len() as u32);
@@ -37,13 +43,18 @@ impl BlockMeta {
             buf.put_u16(meta.first_key.key_len() as u16);
             // first_key
             buf.put_slice(meta.first_key.key_ref());
+            // first_key's time_stamp
+            buf.put_u64(meta.first_key.ts());
             // last_key_len
             buf.put_u16(meta.last_key.key_len() as u16);
             // last_key
             buf.put_slice(meta.last_key.key_ref());
+            // last_key's time_stamp
+            buf.put_u64(meta.last_key.ts());
         }
         // check sum
         buf.put_u32(crc32fast::hash(&buf[block_meta_start+4/* no of blocks */..]));
+        assert_eq!(estimated_size, buf.len() - block_meta_start, "buf size incorrect!")
     }
 
     pub fn decode_from_buf(mut buf: &[u8]) -> Result<Vec<BlockMeta>>{
@@ -53,9 +64,13 @@ impl BlockMeta {
         for i in 0..block_num{
             let offset = buf.get_u32() as usize;
             let first_key_len = buf.get_u16() as usize;
-            let first_key = KeyBytes::for_testing_from_bytes_no_ts(buf.copy_to_bytes(first_key_len));
+            let first_key = buf.copy_to_bytes(first_key_len);
+            let first_key_ts = buf.get_u64();
+            let first_key = KeyBytes::from_bytes_with_ts(first_key, first_key_ts);
             let last_key_len = buf.get_u16() as usize;
-            let last_key = KeyBytes::for_testing_from_bytes_no_ts(buf.copy_to_bytes(last_key_len));
+            let last_key = buf.copy_to_bytes(last_key_len);
+            let last_key_ts = buf.get_u64();
+            let last_key = KeyBytes::from_bytes_with_ts(last_key, last_key_ts);
             metas.push(BlockMeta{
                 offset,
                 first_key,
@@ -66,8 +81,29 @@ impl BlockMeta {
         assert_eq!(buf.get_u32(), checksum, "meta checksum mismatched!");
         Ok(metas)
     }
+
+    /// 计算 Blockmeta 的大小
+    fn estimate_size(block_meta: &[BlockMeta]) -> usize{
+        let mut estimated_size = std::mem::size_of::<u32>(); // number of blocks
+        for meta in block_meta {
+            // The size of offset
+            estimated_size += std::mem::size_of::<u32>();
+            // The size of key length
+            estimated_size += std::mem::size_of::<u16>();
+            // The size of first_key
+            estimated_size += meta.first_key.raw_len();
+            // The size of key length
+            estimated_size += std::mem::size_of::<u16>();
+            // The size of last_key
+            estimated_size += meta.last_key.raw_len();
+        }
+        //estimated_size += std::mem::size_of::<u64>(); // max timestamp
+        estimated_size += std::mem::size_of::<u32>(); // checksum
+        estimated_size
+    }
 }
-// FileObject
+
+/// 文件对象 （File, Size）
 pub struct FileObject(Option<File>, u64);
 
 impl FileObject {
@@ -120,14 +156,17 @@ impl SsTable {
         // [   Block Section  ][        Meta Section         ]
         // [block1, block2,...][[block_meta1, block_meta2,...],block_meta_offset(u32),bloom_filter, bloom_filter_offset(u32)]
         let len = file.size();
+        /** recover bloom_filter start **/
         let bloom_filter_offset = (&file.read(len-4, 4).unwrap()[..]).get_u32() as u64;
-
         let buf = file.read(bloom_filter_offset, file.1-bloom_filter_offset-4/* bloom_filter_offset */)?;
         let bloom_filter = BloomFilter::decode_from_buf(&buf)?;
+        /** recover bloom_filter end **/
+        /** recover block_meta start **/
         let block_meta_offset = (&file.read(bloom_filter_offset-4, 4).unwrap()[..]).get_u32() as u64;
         let block_meta_data_len = file.1-block_meta_offset-4/* block_meta_offset */-(file.1-bloom_filter_offset) /*bloom filter data*/;
         let buf = file.read(block_meta_offset, block_meta_data_len)?;
         let block_meta = BlockMeta::decode_from_buf(&buf)?;
+        /** recover block_meta end **/
         let first_key = block_meta.get(0).unwrap().first_key.clone();
         let last_key = block_meta.get(block_meta.len()-1).unwrap().last_key.clone();
         Ok(Self{
@@ -171,14 +210,14 @@ impl SsTable {
         }
     }
 
-    // 找到一个可能包含 key 的 Block
+    /// 找到一个可能包含 key 的 Block
     pub fn find_block_idx(&self, key: KeySlice) -> usize{
         self.block_meta
             .partition_point(|meta| meta.first_key.as_key_slice() <= key)
             .saturating_sub(1)
     }
 
-    // SsTable 中 Block 的数量
+    /// SsTable 中 Block 的数量
     pub fn num_of_blocks(&self) -> usize {
         self.block_meta.len()
     }
@@ -284,7 +323,7 @@ mod test {
     fn test_sst_iterator() {
         let (_dir, sst) = generate_sst();
         let sst = Arc::new(sst);
-        let mut iter = SsTableIterator::create_and_seek_to_first(sst).unwrap();
+        let mut iter = SsTableIterator::create_and_move_to_first(sst).unwrap();
         for _ in 0..5 {
             for i in 0..num_of_keys() {
                 let key = iter.key();
@@ -305,7 +344,7 @@ mod test {
                 );
                 iter.next().unwrap();
             }
-            iter.seek_to_first().unwrap();
+            iter.move_to_first().unwrap();
         }
     }
 
@@ -313,7 +352,7 @@ mod test {
     fn test_sst_seek_key() {
         let (_dir, sst) = generate_sst();
         let sst = Arc::new(sst);
-        let mut iter = SsTableIterator::create_and_seek_to_key(sst, KeySlice::for_testing_from_slice_no_ts(key_of(0).as_ref())).unwrap();
+        let mut iter = SsTableIterator::create_and_move_to_key(sst, KeySlice::for_testing_from_slice_no_ts(key_of(0).as_ref())).unwrap();
         for offset in 1..=5 {
             for i in 0..num_of_keys() {
                 let key = iter.key();
@@ -332,11 +371,26 @@ mod test {
                     as_bytes(&value_of(i)),
                     as_bytes(value)
                 );
-                iter.seek_to_key(KeySlice::for_testing_from_slice_no_ts(&format!("key_{:03}", i * 5 + offset).as_bytes())).unwrap();
+                iter.move_to_key(KeySlice::for_testing_from_slice_no_ts(&format!("key_{:03}", i * 5 + offset).as_bytes())).unwrap();
             }
-            iter.seek_to_key(KeySlice::for_testing_from_slice_no_ts(b"k"))
+            iter.move_to_key(KeySlice::for_testing_from_slice_no_ts(b"k"))
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn test_sst_build_multi_version_simple() {
+        let mut builder = SsTableBuilder::new(16);
+        builder.add(
+            KeySlice::for_testing_from_slice_with_ts(b"233", 233),
+            b"233333",
+        );
+        builder.add(
+            KeySlice::for_testing_from_slice_with_ts(b"233", 0),
+            b"2333333",
+        );
+        let dir = tempdir().unwrap();
+        builder.build(1, None, dir.path().join("1.sst")).unwrap();
     }
 
 }

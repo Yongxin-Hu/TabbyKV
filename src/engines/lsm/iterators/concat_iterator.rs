@@ -36,7 +36,7 @@ impl SstConcatIterator {
             })
         }
         let mut iter = Self {
-                current: Some(SsTableIterator::create_and_seek_to_first(sstables[0].clone())?),
+                current: Some(SsTableIterator::create_and_move_to_first(sstables[0].clone())?),
                 next_sst_idx: 1,
                 sstables
         };
@@ -57,7 +57,7 @@ impl SstConcatIterator {
             });
         }
         let mut iter = Self {
-            current: Some(SsTableIterator::create_and_seek_to_key(
+            current: Some(SsTableIterator::create_and_move_to_key(
                 sstables[idx].clone(),
                 key,
             )?),
@@ -76,7 +76,7 @@ impl SstConcatIterator {
             if self.next_sst_idx >= self.sstables.len() {
                 self.current = None;
             } else {
-                self.current = Some(SsTableIterator::create_and_seek_to_first(
+                self.current = Some(SsTableIterator::create_and_move_to_first(
                     self.sstables[self.next_sst_idx].clone(),
                 )?);
                 self.next_sst_idx += 1;

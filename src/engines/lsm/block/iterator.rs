@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use bytes::{Buf, Bytes};
-use crate::engines::lsm::block::{Block, SIZEOF_U16};
+use crate::engines::lsm::block::{Block, SIZEOF_U16, SIZEOF_U64};
 use crate::engines::lsm::key::{KeySlice, KeyVec};
 
 pub struct BlockIterator {
@@ -16,18 +16,21 @@ pub struct BlockIterator {
 }
 
 impl Block {
+    /// 获取 Block 的 first_key
     fn get_first_key(&self) -> KeyVec {
         let mut buf = &self.data[..];
+        // first_key 的 key_overlap_len 必定为 0，跳过
         buf.get_u16();
         let key_len = buf.get_u16();
         let key = &buf[..key_len as usize];
-        KeyVec::for_testing_from_vec_no_ts(key.to_vec())
+        let ts = buf.get_u64();
+        KeyVec::from_vec_with_ts(key.to_vec(), ts)
     }
 }
 
 
 impl BlockIterator{
-    // 创建 BlockIterator
+    /// 创建 BlockIterator
     fn new(block: Arc<Block>) -> Self {
         let first_key = block.get_first_key();
         BlockIterator {
@@ -39,7 +42,7 @@ impl BlockIterator{
         }
     }
 
-    // 创建 BlockIterator 并且移动到第一个 kv-pair
+    /// 创建 BlockIterator 并且移动到第一个 kv-pair
     pub fn create_and_move_to_first(block: Arc<Block>) -> Self {
         let mut iter = BlockIterator::new(block);
         iter.move_to_first();
@@ -65,7 +68,7 @@ impl BlockIterator{
         &self.block.data[self.value_range.0..self.value_range.1]
     }
 
-    // 当前 iterator 是否有效
+    /// 当前 iterator 是否有效
     pub fn is_valid(&self) -> bool {
         !self.key.is_empty()
     }
@@ -115,10 +118,11 @@ impl BlockIterator{
         let rest_key_len = data.get_u16() as usize;
         let rest_key = &data[..rest_key_len];
         data.advance(rest_key_len);
+        data.advance(SIZEOF_U64);
         // value
         let value_len = data.get_u16() as usize;
         let value_start = offset + 2 * SIZEOF_U16/* key_overlap_len+rest_key_len */
-            + rest_key_len /* rest_key */ + SIZEOF_U16/* value_len */;
+            + rest_key_len /* rest_key */ + SIZEOF_U64/* time_stamp */+  SIZEOF_U16/* value_len */;
         let value_end = value_start + value_len;
 
         self.idx = index;

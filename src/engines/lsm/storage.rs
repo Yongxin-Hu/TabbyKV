@@ -324,7 +324,7 @@ impl LsmStorageInner{
                 table.first_key().as_key_slice(),
                 table.last_key().as_key_slice()
             ) && table.bloom_filter.may_contain(key){
-                l0_iter.push(Box::new(SsTableIterator::create_and_seek_to_key(
+                l0_iter.push(Box::new(SsTableIterator::create_and_move_to_key(
                     table,
                     KeySlice::for_testing_from_slice_no_ts(key)
                 )?));
@@ -417,18 +417,18 @@ impl LsmStorageInner{
             ){
                 let iter = match lower {
                     Bound::Included(key) => {
-                        SsTableIterator::create_and_seek_to_key(Arc::clone(table), KeySlice::for_testing_from_slice_no_ts(key))?
+                        SsTableIterator::create_and_move_to_key(Arc::clone(table), KeySlice::for_testing_from_slice_no_ts(key))?
                     },
                     Bound::Excluded(key) => {
                         let mut iter_inner =
-                            SsTableIterator::create_and_seek_to_key(Arc::clone(table),
+                            SsTableIterator::create_and_move_to_key(Arc::clone(table),
                                                                     KeySlice::for_testing_from_slice_no_ts(key))?;
                         if iter_inner.is_valid() && iter_inner.key() == key {
                             iter_inner.next()?;
                         }
                         iter_inner
                     },
-                    Bound::Unbounded => SsTableIterator::create_and_seek_to_first(Arc::clone(table))?
+                    Bound::Unbounded => SsTableIterator::create_and_move_to_first(Arc::clone(table))?
                 };
                 iters.push(Box::new(iter));
             }

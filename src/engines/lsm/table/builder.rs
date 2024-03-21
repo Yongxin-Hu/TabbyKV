@@ -10,12 +10,12 @@ use crate::engines::lsm::table::bloom_filter::BloomFilter;
 
 pub struct SsTableBuilder {
     block_builder: BlockBuilder,
-    // 协助记录每个block的first_key以及last_key
+    // 协助记录 sst 的 first_key 以及 last_key
     first_key: KeyVec,
     last_key: KeyVec,
-    // sstable中的数据 ([block, ...], [block_meta, ...])
+    // sstable中的数据 ([   Block Section  ][        Meta Section         ])
     data: Vec<u8>,
-    // 保存每个block的元信息
+    // 保存每个 block 的元信息
     pub(crate) meta: Vec<BlockMeta>,
     block_size: usize,
     bloom_filter: BloomFilter

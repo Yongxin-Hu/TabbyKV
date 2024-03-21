@@ -13,8 +13,8 @@ pub struct SsTableIterator {
 }
 
 impl SsTableIterator {
-    /// 创建并且定位到第一个 Block
-    pub fn create_and_seek_to_first(table: Arc<SsTable>) -> Result<Self>{
+    /// 创建并且移动到第一个 Block
+    pub fn create_and_move_to_first(table: Arc<SsTable>) -> Result<Self>{
         let first_block = table.read_block_with_cache(0)?;
         Ok(SsTableIterator{
             table: Arc::clone(&table),
@@ -23,15 +23,15 @@ impl SsTableIterator {
         })
     }
 
-    /// 定位到第一个 Block
-    pub fn seek_to_first(&mut self) -> Result<()> {
+    /// 移动到第一个 Block
+    pub fn move_to_first(&mut self) -> Result<()> {
         let first_block = self.table.read_block_with_cache(0)?;
         self.block_index = 0;
         self.block_iterator = BlockIterator::create_and_move_to_first(first_block);
         Ok(())
     }
 
-    fn seek_to_key_inner(table: &Arc<SsTable>, key: KeySlice) -> Result<(usize, BlockIterator)> {
+    fn move_to_key_inner(table: &Arc<SsTable>, key: KeySlice) -> Result<(usize, BlockIterator)> {
         let mut block_idx = table.find_block_idx(key);
         let mut block = table.read_block_with_cache(block_idx)?;
         let mut block_iterator = BlockIterator::create_and_move_to_key(block, key);
@@ -45,9 +45,9 @@ impl SsTableIterator {
         Ok((block_idx, block_iterator))
     }
 
-    /// 创建并且定位到第一个key >= `key` 的位置
-    pub fn create_and_seek_to_key(table: Arc<SsTable>, key: KeySlice) -> Result<Self>{
-        let (block_index, block_iterator) = Self::seek_to_key_inner(&table, key)?;
+    /// 创建并且移动到第一个key >= `key` 的位置
+    pub fn create_and_move_to_key(table: Arc<SsTable>, key: KeySlice) -> Result<Self>{
+        let (block_index, block_iterator) = Self::move_to_key_inner(&table, key)?;
         Ok(SsTableIterator{
             table,
             block_index,
@@ -55,9 +55,9 @@ impl SsTableIterator {
         })
     }
 
-    /// 定位到第一个key >= `key` 的位置
-    pub fn seek_to_key(&mut self, key: KeySlice) -> Result<()>{
-        let (block_index, block_iterator) = Self::seek_to_key_inner(&self.table, key)?;
+    /// 移动到第一个key >= `key` 的位置
+    pub fn move_to_key(&mut self, key: KeySlice) -> Result<()>{
+        let (block_index, block_iterator) = Self::move_to_key_inner(&self.table, key)?;
         self.block_index = block_index;
         self.block_iterator = block_iterator;
         Ok(())

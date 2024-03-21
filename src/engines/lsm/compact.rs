@@ -164,7 +164,7 @@ impl LsmStorageInner {
             } => {
                 let mut l0_iters = Vec::with_capacity(l0_sstables.len());
                 for sst_id in l0_sstables{
-                    l0_iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
+                    l0_iters.push(Box::new(SsTableIterator::create_and_move_to_first(
                         snapshot.sstables.get(sst_id).unwrap().clone(),
                     )?));
                 }
@@ -189,7 +189,7 @@ impl LsmStorageInner {
                     None => {
                         let mut l0_iters = Vec::with_capacity(upper_level_sst_ids.len());
                         for sst_id in upper_level_sst_ids{
-                            l0_iters.push(Box::new(SsTableIterator::create_and_seek_to_first(
+                            l0_iters.push(Box::new(SsTableIterator::create_and_move_to_first(
                                 snapshot.sstables.get(sst_id).unwrap().clone(),
                             )?));
                         }

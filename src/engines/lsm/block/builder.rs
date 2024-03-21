@@ -7,7 +7,7 @@ const SIZEOF_U16: usize = std::mem::size_of::<u16>();
 pub struct BlockBuilder {
     /// 每个 kv-pair 的 offset
     offsets: Vec<u16>,
-    /// [key_overlap_len(u16), rest_key_len(u16),key(rest_key_len), value_len(u16), value]
+    /// [key_overlap_len(u16), rest_key_len(u16),key(rest_key_len), time_stamp(u64), value_len(u16), value]
     /// 由于 block 内部的 key 是有序排列的，
     /// 使用 key_overlap_len 记录 key和 block 的 first_key 重合的长度来减少重复记录前缀
     data: Vec<u8>,
@@ -69,6 +69,8 @@ impl BlockBuilder {
             self.data.put_u16((key.key_len() - key_overlap_len) as u16);
             // rest_key
             self.data.put(&key.key_ref()[key_overlap_len..]);
+            // time_stamp
+            self.data.put_u64(key.ts());
             // value_len
             self.data.put_u16(value.len() as u16);
             // value
