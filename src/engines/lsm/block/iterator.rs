@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use bytes::{Buf, Bytes};
 use crate::engines::lsm::block::{Block, SIZEOF_U16};
-use crate::engines::lsm::key::KeyVec;
+use crate::engines::lsm::key::{KeySlice, KeyVec};
 
 pub struct BlockIterator {
     block: Arc<Block>,
@@ -47,16 +47,16 @@ impl BlockIterator{
     }
 
     /// 创建 BlockIterator 并且移动到第一个 key >= `key`
-    pub fn create_and_move_to_key(block: Arc<Block>, key: &[u8]) -> Self {
+    pub fn create_and_move_to_key(block: Arc<Block>, key: KeySlice) -> Self {
         let mut iter = BlockIterator::new(block);
         iter.move_to_key(key);
         iter
     }
 
     /// 返回当前的 key
-    pub fn key(&self) -> &[u8] {
+    pub fn key(&self) -> KeySlice {
         assert!(!self.key.is_empty(), "invalid iterator, key must not empty");
-        self.key.key_ref()
+        self.key.as_key_slice()
     }
 
     /// 返回当前的 value
@@ -82,7 +82,7 @@ impl BlockIterator{
     }
 
     /// 移动到第一个 key >= `key`
-    pub fn move_to_key(&mut self, key: &[u8]) {
+    pub fn move_to_key(&mut self, key: KeySlice) {
         let mut low = 0;
         let mut high = self.block.offsets.len();
         while low < high {
@@ -187,7 +187,7 @@ mod test{
                     key_of(i).as_slice(),
                     "expected key: {:?}, actual key: {:?}",
                     as_bytes(key_of(i).as_slice()),
-                    as_bytes(key)
+                    as_bytes(key.key_ref())
                 );
                 assert_eq!(
                     value,
@@ -220,7 +220,7 @@ mod test{
     #[test]
     fn test_block_seek_key() {
         let block = Arc::new(generate_block());
-        let mut iter = BlockIterator::create_and_move_to_key(block, key_of(0).as_slice());
+        let mut iter = BlockIterator::create_and_move_to_key(block, KeySlice::for_testing_from_slice_no_ts(key_of(0).as_slice()));
         for offset in 1..=5 {
             for i in 0..num_of_keys() {
                 let key = iter.key();
@@ -230,7 +230,7 @@ mod test{
                     key_of(i).as_slice(),
                     "expected key: {:?}, actual key: {:?}",
                     as_bytes(key_of(i).as_slice()),
-                    as_bytes(key)
+                    as_bytes(key.key_ref())
                 );
                 assert_eq!(
                     value,
@@ -239,9 +239,9 @@ mod test{
                     as_bytes(&value_of(i)),
                     as_bytes(value)
                 );
-                iter.move_to_key(&format!("key_{:03}", i * 5 + offset).into_bytes());
+                iter.move_to_key(KeySlice::for_testing_from_slice_no_ts(&format!("key_{:03}", i * 5 + offset).into_bytes()));
             }
-            iter.move_to_key(b"k");
+            iter.move_to_key(KeySlice::for_testing_from_slice_no_ts(b"k"));
         }
     }
 }

@@ -9,13 +9,14 @@ use anyhow::Result;
 use crossbeam_skiplist::map::Entry;
 use ouroboros::self_referencing;
 use crate::engines::lsm::iterators::StorageIterator;
+use crate::engines::lsm::key::{KeyBytes, KeySlice};
 use crate::engines::lsm::table::builder::SsTableBuilder;
-use crate::engines::lsm::utils::map_bound;
+use crate::engines::lsm::utils::{map_bound, map_key_bound};
 
 pub struct MemTable {
     // 实际存储 KV-pair 的 SkipMap
     // TODO 用自己写的 SkipMap 替换
-    map: Arc<SkipMap<Bytes, Bytes>>,
+    map: Arc<SkipMap<KeyBytes, Bytes>>,
     // WAL 预写日志
     wal: Option<Wal>,
     id: usize,
@@ -61,20 +62,20 @@ impl MemTable {
 
     /// 根据 key 获取 value
     pub fn get(&self, key: &[u8]) -> Option<Bytes> {
-        match self.map.get(key){
+        match self.map.get(&KeyBytes::for_testing_from_bytes_no_ts(Bytes::copy_from_slice(key))){
             None => None,
             Some(t) => Some(t.value().clone())
         }
     }
 
     /// 将 KV-pair 放入 mem_table
-    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        let estimated_size = key.len() + value.len();
-        self.map.insert(Bytes::copy_from_slice(key),Bytes::copy_from_slice(value));
+    pub fn put(&self, key: KeySlice, value: &[u8]) -> Result<()> {
+        let estimated_size = key.key_len() + value.len();
+        self.map.insert(key.to_key_vec().into_key_bytes(),Bytes::copy_from_slice(value));
         self.approximate_size
             .fetch_add(estimated_size, std::sync::atomic::Ordering::Relaxed);
         if let Some(wal) = &self.wal {
-            wal.put(key, value)?;
+            wal.put(key.key_ref(), value)?;
         }
         self.sync_wal()?;
         Ok(())
@@ -82,24 +83,20 @@ impl MemTable {
 
     // 将 memtable 中的 kv-pair 加入 ss_table_builder
     pub fn flush(&self, ss_table_builder: &mut SsTableBuilder) -> Result<()> {
-        let mut iter = self.scan(Bound::Unbounded, Bound::Unbounded);
-        while iter.is_valid() {
-            ss_table_builder.add(iter.key(), iter.value());
-            iter.next()?;
+        for entry in self.map.iter(){
+            ss_table_builder.add(entry.key().as_key_slice(), &entry.value()[..]);
         }
         Ok(())
     }
 
-    pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> MemTableIterator {
-        let (lower, upper) = (map_bound(lower), map_bound(upper));
+    pub fn scan(&self, lower: Bound<KeySlice>, upper: Bound<KeySlice>) -> MemTableIterator {
+        let (lower, upper) = (map_key_bound(lower), map_key_bound(upper));
         let mut iter = MemTableIteratorBuilder {
             map: self.map.clone(),
             iter_builder: |map| map.range((lower, upper)),
-            item: (Bytes::new(), Bytes::new()),
-        }
-            .build();
-        let entry = iter.with_iter_mut(|iter| MemTableIterator::entry_to_item(iter.next()));
-        iter.with_mut(|x| *x.item = entry);
+            item: (KeyBytes::new(), Bytes::new()),
+        }.build();
+        iter.next().unwrap();
         iter
     }
 
@@ -124,26 +121,31 @@ impl MemTable {
     }
 }
 
-type SkipMapRangeIter<'a> =
-crossbeam_skiplist::map::Range<'a, Bytes, (Bound<Bytes>, Bound<Bytes>), Bytes, Bytes>;
+type SkipMapRangeIter<'a> = crossbeam_skiplist::map::Range<
+    'a,
+    KeyBytes,
+    (Bound<KeyBytes>, Bound<KeyBytes>),
+    KeyBytes,
+    Bytes,
+>;
 
 #[self_referencing]
 pub struct MemTableIterator {
     /// Stores a reference to the skipmap.
-    map: Arc<SkipMap<Bytes, Bytes>>,
+    map: Arc<SkipMap<KeyBytes, Bytes>>,
     /// Stores a skipmap iterator that refers to the lifetime of `MemTableIterator` itself.
     #[borrows(map)]
     #[not_covariant]
     iter: SkipMapRangeIter<'this>,
     /// Stores the current key-value pair.
-    item: (Bytes, Bytes),
+    item: (KeyBytes, Bytes),
 }
 
 impl MemTableIterator {
-    fn entry_to_item(entry: Option<Entry<'_, Bytes, Bytes>>) -> (Bytes, Bytes) {
+    fn entry_to_item(entry: Option<Entry<'_, KeyBytes, Bytes>>) -> (KeyBytes, Bytes) {
         entry
             .map(|x| (x.key().clone(), x.value().clone()))
-            .unwrap_or_else(|| (Bytes::from_static(&[]), Bytes::from_static(&[])))
+            .unwrap_or_else(|| (KeyBytes::new(), Bytes::new()))
     }
 }
 
@@ -154,7 +156,7 @@ impl StorageIterator for MemTableIterator {
     }
 
     fn key(&self) -> &[u8] {
-        &self.borrow_item().0[..]
+        &self.borrow_item().0.key_ref()
     }
 
     fn is_valid(&self) -> bool {
@@ -171,14 +173,15 @@ impl StorageIterator for MemTableIterator {
 #[cfg(test)]
 mod test{
     use crate::engines::lsm::iterators::StorageIterator;
+    use crate::engines::lsm::key::KeySlice;
     use crate::engines::lsm::mem_table::MemTable;
 
     #[test]
     fn test_mem_table_get() {
         let mem_table = MemTable::create(0);
-        mem_table.put(b"key1", b"value1").unwrap();
-        mem_table.put(b"key2", b"value2").unwrap();
-        mem_table.put(b"key3", b"value3").unwrap();
+        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key1"), b"value1").unwrap();
+        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key2"), b"value2").unwrap();
+        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key3"), b"value3").unwrap();
         assert_eq!(&mem_table.get(b"key1").unwrap()[..], b"value1");
         assert_eq!(&mem_table.get(b"key2").unwrap()[..], b"value2");
         assert_eq!(&mem_table.get(b"key3").unwrap()[..], b"value3");
@@ -187,12 +190,12 @@ mod test{
     #[test]
     fn test_mem_table_overwrite() {
         let mem_table = MemTable::create(0);
-        mem_table.put(b"key1", b"value1").unwrap();
-        mem_table.put(b"key2", b"value2").unwrap();
-        mem_table.put(b"key3", b"value3").unwrap();
-        mem_table.put(b"key1", b"value11").unwrap();
-        mem_table.put(b"key2", b"value22").unwrap();
-        mem_table.put(b"key3", b"value33").unwrap();
+        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key1"), b"value1").unwrap();
+        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key2"), b"value2").unwrap();
+        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key3"), b"value3").unwrap();
+        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key1"), b"value11").unwrap();
+        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key2"), b"value22").unwrap();
+        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key3"), b"value33").unwrap();
         assert_eq!(&mem_table.get(b"key1").unwrap()[..], b"value11");
         assert_eq!(&mem_table.get(b"key2").unwrap()[..], b"value22");
         assert_eq!(&mem_table.get(b"key3").unwrap()[..], b"value33");
@@ -202,9 +205,9 @@ mod test{
     fn test_memtable_iter() {
         use std::ops::Bound;
         let memtable = MemTable::create(0);
-        memtable.put(b"key1", b"value1").unwrap();
-        memtable.put(b"key2", b"value2").unwrap();
-        memtable.put(b"key3", b"value3").unwrap();
+        memtable.put(KeySlice::for_testing_from_slice_no_ts(b"key1"), b"value1").unwrap();
+        memtable.put(KeySlice::for_testing_from_slice_no_ts(b"key2"), b"value2").unwrap();
+        memtable.put(KeySlice::for_testing_from_slice_no_ts(b"key3"), b"value3").unwrap();
 
         {
             let mut iter = memtable.scan(Bound::Unbounded, Bound::Unbounded);
@@ -224,7 +227,7 @@ mod test{
         }
 
         {
-            let mut iter = memtable.scan(Bound::Included(b"key1"), Bound::Included(b"key2"));
+            let mut iter = memtable.scan(Bound::Included(KeySlice::for_testing_from_slice_no_ts(b"key1")), Bound::Included(KeySlice::for_testing_from_slice_no_ts(b"key2")));
             assert_eq!(iter.key(), b"key1");
             assert_eq!(iter.value(), b"value1");
             assert!(iter.is_valid());
@@ -237,7 +240,7 @@ mod test{
         }
 
         {
-            let mut iter = memtable.scan(Bound::Excluded(b"key1"), Bound::Excluded(b"key3"));
+            let mut iter = memtable.scan(Bound::Excluded(KeySlice::for_testing_from_slice_no_ts(b"key1")), Bound::Excluded(KeySlice::for_testing_from_slice_no_ts(b"key3")));
             assert_eq!(iter.key(), b"key2");
             assert_eq!(iter.value(), b"value2");
             assert!(iter.is_valid());
@@ -251,11 +254,11 @@ mod test{
         use std::ops::Bound;
         let memtable = MemTable::create(0);
         {
-            let iter = memtable.scan(Bound::Excluded(b"key1"), Bound::Excluded(b"key3"));
+            let iter = memtable.scan(Bound::Excluded(KeySlice::for_testing_from_slice_no_ts(b"key1")), Bound::Excluded(KeySlice::for_testing_from_slice_no_ts(b"key3")));
             assert!(!iter.is_valid());
         }
         {
-            let iter = memtable.scan(Bound::Included(b"key1"), Bound::Included(b"key2"));
+            let iter = memtable.scan(Bound::Included(KeySlice::for_testing_from_slice_no_ts(b"key1")), Bound::Included(KeySlice::for_testing_from_slice_no_ts(b"key2")));
             assert!(!iter.is_valid());
         }
         {

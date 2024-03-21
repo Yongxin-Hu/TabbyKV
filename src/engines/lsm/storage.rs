@@ -22,11 +22,12 @@ use crate::engines::lsm::iterators::lsm_iterator::LsmIterator;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 use crate::engines::lsm::iterators::StorageIterator;
 use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
+use crate::engines::lsm::key::KeySlice;
 use crate::engines::lsm::manifest::{Manifest, ManifestRecord};
 use crate::engines::lsm::table::builder::SsTableBuilder;
 use crate::engines::lsm::table::iterator::SsTableIterator;
 use crate::engines::lsm::table::{FileObject, SsTable};
-use crate::engines::lsm::utils::map_bound;
+use crate::engines::lsm::utils::{map_bound, map_bound_for_test};
 
 /// (sst_id, block_index)
 pub type BlockCache = moka::sync::Cache<(usize, usize), Arc<Block>>;
@@ -155,33 +156,33 @@ impl LsmStorageInner{
 
     // 检查是否 key 在[table_first_key, table_last_key]的范围内
     fn check_key_in_range(
-        key:Bytes,
-        table_first_key: Bytes,
-        table_last_key: Bytes
+        key:&[u8],
+        table_first_key: KeySlice,
+        table_last_key: KeySlice
     ) -> bool{
-        key>=table_first_key && key <= table_last_key
+        key>=table_first_key.key_ref() && key <= table_last_key.key_ref()
     }
 
     fn check_range(
         lower: Bound<&[u8]>,
         upper: Bound<&[u8]>,
-        table_first_key: Bytes,
-        table_last_key: Bytes
+        table_first_key: KeySlice,
+        table_last_key: KeySlice
     ) -> bool{
         match upper {
-            Bound::Excluded(key) if key <= table_first_key => {
+            Bound::Excluded(key) if key <= table_first_key.key_ref() => {
                 return false;
             },
-            Bound::Included(key) if key < table_first_key => {
+            Bound::Included(key) if key < table_first_key.key_ref() => {
                 return false;
             },
             _ => {}
         }
         match lower {
-            Bound::Excluded(key) if key >= table_last_key => {
+            Bound::Excluded(key) if key >= table_last_key.key_ref() => {
                 return false;
             },
-            Bound::Included(key) if key > table_last_key => {
+            Bound::Included(key) if key > table_last_key.key_ref() => {
                 return false;
             },
             _ => {}
@@ -319,13 +320,13 @@ impl LsmStorageInner{
             let table = snapshot.sstables[table_id].clone();
             // 根据 sst 的first_key, last_key 以及 bloom_filter，跳过不含 key 的sstable
             if Self::check_key_in_range(
-                Bytes::copy_from_slice(key),
-                table.first_key(),
-                table.last_key()
+                key,
+                table.first_key().as_key_slice(),
+                table.last_key().as_key_slice()
             ) && table.bloom_filter.may_contain(key){
                 l0_iter.push(Box::new(SsTableIterator::create_and_seek_to_key(
                     table,
-                    Bytes::copy_from_slice(key)
+                    KeySlice::for_testing_from_slice_no_ts(key)
                 )?));
             }
         }
@@ -371,7 +372,7 @@ impl LsmStorageInner{
                     let size;
                     {
                         let guard = self.state.read();
-                        guard.active_memtable.put(key, value)?;
+                        guard.active_memtable.put(KeySlice::for_testing_from_slice_no_ts(key), value)?;
                         size = guard.active_memtable.approximate_size();
                     }
                     self.try_freeze(size)?;
@@ -382,7 +383,7 @@ impl LsmStorageInner{
                     let size;
                     {
                         let guard = self.state.read();
-                        guard.active_memtable.put(key, b"")?;
+                        guard.active_memtable.put(KeySlice::for_testing_from_slice_no_ts(key), b"")?;
                         size = guard.active_memtable.approximate_size();
                     }
                     self.try_freeze(size)?;
@@ -398,12 +399,11 @@ impl LsmStorageInner{
             let guard = self.state.read();
             Arc::clone(&guard)
         };
-
         let mut iters = Vec::with_capacity(
             snapshot.readonly_memtables.len() + 1 /* activate mem_table */);
-        iters.push(Box::new(snapshot.active_memtable.scan(lower, upper)));
+        iters.push(Box::new(snapshot.active_memtable.scan(map_bound_for_test(lower), map_bound_for_test(upper))));
         for imm_memtable in &snapshot.readonly_memtables {
-            iters.push(Box::new(imm_memtable.scan(lower, upper)));
+            iters.push(Box::new(imm_memtable.scan(map_bound_for_test(lower), map_bound_for_test(upper))));
         }
         let mem_table_iters = MergeIterator::create(iters);
         let mut iters = Vec::with_capacity(snapshot.l0_sstables.len());
@@ -412,17 +412,17 @@ impl LsmStorageInner{
             if Self::check_range(
                 lower,
                 upper,
-                table.first_key(),
-                table.last_key()
+                table.first_key().as_key_slice(),
+                table.last_key().as_key_slice()
             ){
                 let iter = match lower {
                     Bound::Included(key) => {
-                        SsTableIterator::create_and_seek_to_key(Arc::clone(table), Bytes::copy_from_slice(key))?
+                        SsTableIterator::create_and_seek_to_key(Arc::clone(table), KeySlice::for_testing_from_slice_no_ts(key))?
                     },
                     Bound::Excluded(key) => {
                         let mut iter_inner =
                             SsTableIterator::create_and_seek_to_key(Arc::clone(table),
-                                                                    Bytes::copy_from_slice(key))?;
+                                                                    KeySlice::for_testing_from_slice_no_ts(key))?;
                         if iter_inner.is_valid() && iter_inner.key() == key {
                             iter_inner.next()?;
                         }
@@ -443,8 +443,8 @@ impl LsmStorageInner{
                 if Self::check_range(
                     lower,
                     upper,
-                    table.first_key(),
-                    table.last_key()
+                    table.first_key().as_key_slice(),
+                    table.last_key().as_key_slice()
                 ){
                     level_ssts.push(table);
                 }
@@ -601,6 +601,7 @@ mod test{
     use crate::engines::lsm::compact::SimpleLeveledCompactionOptions;
     use crate::engines::lsm::iterators::concat_iterator::SstConcatIterator;
     use crate::engines::lsm::iterators::StorageIterator;
+    use crate::engines::lsm::key::KeySlice;
     use crate::engines::lsm::storage::{LsmStorage, LsmStorageInner};
     use crate::engines::lsm::storage::option::{CompactionOptions, LsmStorageOptions};
     use crate::engines::lsm::table::builder::SsTableBuilder;
@@ -789,7 +790,7 @@ mod test{
     ) -> SsTable {
         let mut builder = SsTableBuilder::new(128);
         for (key, value) in data {
-            builder.add(&key[..], &value[..]);
+            builder.add(KeySlice::for_testing_from_slice_no_ts(&key[..]), &value[..]);
         }
         builder.build(id, None, path.as_ref()).unwrap()
     }
@@ -1101,7 +1102,7 @@ mod test{
         for idx in start_key..end_key {
             let key = format!("{:05}", idx);
             builder.add(
-                key.as_bytes(),
+                KeySlice::for_testing_from_slice_no_ts(key.as_bytes()),
                 b"test",
             );
         }

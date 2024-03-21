@@ -4,15 +4,15 @@ use bytes::{BufMut, Bytes};
 use crate::engines::lsm::block::builder::BlockBuilder;
 use crate::engines::lsm::table::{BlockMeta, FileObject, SsTable};
 use anyhow::Result;
-use crate::engines::lsm::key::KeySlice;
+use crate::engines::lsm::key::{KeySlice, KeyVec};
 use crate::engines::lsm::storage::BlockCache;
 use crate::engines::lsm::table::bloom_filter::BloomFilter;
 
 pub struct SsTableBuilder {
     block_builder: BlockBuilder,
     // 协助记录每个block的first_key以及last_key
-    first_key: Bytes,
-    last_key: Bytes,
+    first_key: KeyVec,
+    last_key: KeyVec,
     // sstable中的数据 ([block, ...], [block_meta, ...])
     data: Vec<u8>,
     // 保存每个block的元信息
@@ -27,8 +27,8 @@ impl SsTableBuilder{
     pub fn new(block_size: usize) -> Self {
         SsTableBuilder{
             block_builder: BlockBuilder::new(block_size),
-            first_key: Bytes::new(),
-            last_key: Bytes::new(),
+            first_key: KeyVec::new(),
+            last_key: KeyVec::new(),
             data: Vec::new(),
             meta: Vec::new(),
             block_size,
@@ -37,25 +37,25 @@ impl SsTableBuilder{
     }
 
     /// 向 sstable 中添加 kv-pair (在 Block 满的时候新建 Block)
-    pub fn add(&mut self, key: &[u8], value: &[u8]) {
+    pub fn add(&mut self, key: KeySlice, value: &[u8]) {
         // BloomFilter 记录 key
-        self.bloom_filter.add(key);
+        self.bloom_filter.add(key.key_ref());
 
         if self.first_key.is_empty() {
-            self.first_key = Bytes::copy_from_slice(key);
+            self.first_key.set_from_slice(key);
         }
 
-        if self.block_builder.add(KeySlice::for_testing_from_slice_no_ts(key), value) {
-            self.last_key = Bytes::copy_from_slice(key);
+        if self.block_builder.add(key, value) {
+            self.last_key.set_from_slice(key);
             return;
         }else{
             // Block已满
             self.complete_block();
         }
 
-        assert!(self.block_builder.add(KeySlice::for_testing_from_slice_no_ts(key), value));
-        self.first_key = Bytes::copy_from_slice(key);
-        self.last_key = Bytes::copy_from_slice(key);
+        assert!(self.block_builder.add(key, value));
+        self.first_key.set_from_slice(key);
+        self.last_key.set_from_slice(key);
     }
 
     /// 构建 block
@@ -63,8 +63,8 @@ impl SsTableBuilder{
         let block_builder = std::mem::replace(&mut self.block_builder, BlockBuilder::new(self.block_size));
         self.meta.push(BlockMeta{
             offset: self.data.len(),
-            first_key: std::mem::take(&mut self.first_key),
-            last_key: std::mem::take(&mut self.last_key),
+            first_key: std::mem::take(&mut self.first_key).into_key_bytes(),
+            last_key: std::mem::take(&mut self.last_key).into_key_bytes(),
         });
         let mut block_data = block_builder.build().encode().to_vec();
         let checksum = crc32fast::hash(&block_data);
@@ -117,13 +117,14 @@ impl SsTableBuilder{
 #[cfg(test)]
 mod test {
     use tempfile::tempdir;
+    use crate::engines::lsm::key::KeySlice;
     use crate::engines::lsm::table::builder::SsTableBuilder;
 
     #[test]
     fn simple_test_sst_builder() {
         let dir = tempdir().unwrap();
         let mut sstable_builder = SsTableBuilder::new(16);
-        sstable_builder.add(b"key1", b"value1");
+        sstable_builder.add(KeySlice::for_testing_from_slice_no_ts(b"key1"), b"value1");
         let path = dir.path().join("1.sst");
         let sst = sstable_builder.build(0, None, path).unwrap();
     }
@@ -131,12 +132,12 @@ mod test {
     #[test]
     fn test_block_split(){
         let mut builder = SsTableBuilder::new(16);
-        builder.add(b"11", b"11");
-        builder.add(b"22", b"22");
-        builder.add(b"33", b"33");
-        builder.add(b"44", b"44");
-        builder.add(b"55", b"55");
-        builder.add(b"66", b"66");
+        builder.add(KeySlice::for_testing_from_slice_no_ts(b"11"), b"11");
+        builder.add(KeySlice::for_testing_from_slice_no_ts(b"22"), b"22");
+        builder.add(KeySlice::for_testing_from_slice_no_ts(b"33"), b"33");
+        builder.add(KeySlice::for_testing_from_slice_no_ts(b"44"), b"44");
+        builder.add(KeySlice::for_testing_from_slice_no_ts(b"55"), b"55");
+        builder.add(KeySlice::for_testing_from_slice_no_ts(b"66"), b"66");
         assert!(builder.meta.len() >= 2);
         let mut dir = tempdir().unwrap();
         let path = dir.path().join("1.sst");

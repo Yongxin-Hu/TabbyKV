@@ -19,6 +19,7 @@ use crate::engines::lsm::iterators::concat_iterator::SstConcatIterator;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 use crate::engines::lsm::iterators::StorageIterator;
 use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
+use crate::engines::lsm::key::KeySlice;
 use crate::engines::lsm::manifest::ManifestRecord;
 use crate::engines::lsm::storage::LsmStorageInner;
 use crate::engines::lsm::storage::option::CompactionOptions;
@@ -121,10 +122,10 @@ impl LsmStorageInner {
             let builder_inner = sst_builder.as_mut().unwrap();
             if compact_to_bottom_level{
                 if !iter.value().is_empty(){
-                    builder_inner.add(iter.key(), iter.value());
+                    builder_inner.add(KeySlice::for_testing_from_slice_no_ts(iter.key()), iter.value());
                 }
             } else {
-                builder_inner.add(iter.key(), iter.value());
+                builder_inner.add(KeySlice::for_testing_from_slice_no_ts(iter.key()), iter.value());
             }
 
             iter.next()?;

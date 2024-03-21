@@ -13,6 +13,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use bytes::{Buf, BufMut, Bytes};
 use crate::engines::lsm::block::Block;
+use crate::engines::lsm::key::{KeyBytes, KeySlice};
 use crate::engines::lsm::storage::BlockCache;
 use crate::engines::lsm::table::bloom_filter::BloomFilter;
 
@@ -20,8 +21,8 @@ use crate::engines::lsm::table::bloom_filter::BloomFilter;
 #[derive(Clone, Debug, PartialEq)]
 pub struct BlockMeta {
     pub offset: usize,
-    pub first_key: Bytes,
-    pub last_key: Bytes
+    pub first_key: KeyBytes,
+    pub last_key: KeyBytes
 }
 
 impl BlockMeta {
@@ -33,13 +34,13 @@ impl BlockMeta {
             // offset
             buf.put_u32(meta.offset as u32);
             // first_key_len
-            buf.put_u16(meta.first_key.len() as u16);
+            buf.put_u16(meta.first_key.key_len() as u16);
             // first_key
-            buf.put_slice(meta.first_key.as_ref());
+            buf.put_slice(meta.first_key.key_ref());
             // last_key_len
-            buf.put_u16(meta.last_key.len() as u16);
+            buf.put_u16(meta.last_key.key_len() as u16);
             // last_key
-            buf.put_slice(meta.last_key.as_ref());
+            buf.put_slice(meta.last_key.key_ref());
         }
         // check sum
         buf.put_u32(crc32fast::hash(&buf[block_meta_start+4/* no of blocks */..]));
@@ -52,9 +53,9 @@ impl BlockMeta {
         for i in 0..block_num{
             let offset = buf.get_u32() as usize;
             let first_key_len = buf.get_u16() as usize;
-            let first_key = buf.copy_to_bytes(first_key_len);
+            let first_key = KeyBytes::for_testing_from_bytes_no_ts(buf.copy_to_bytes(first_key_len));
             let last_key_len = buf.get_u16() as usize;
-            let last_key = buf.copy_to_bytes(last_key_len);
+            let last_key = KeyBytes::for_testing_from_bytes_no_ts(buf.copy_to_bytes(last_key_len));
             metas.push(BlockMeta{
                 offset,
                 first_key,
@@ -106,8 +107,8 @@ pub struct SsTable {
     pub(crate) block_meta: Vec<BlockMeta>,
     pub(crate) block_meta_offset: usize,
     id: usize,
-    first_key: Bytes,
-    last_key: Bytes,
+    first_key: KeyBytes,
+    last_key: KeyBytes,
     block_cache: Option<Arc<BlockCache>>,
     pub(crate) bloom_filter: BloomFilter
 }
@@ -171,9 +172,9 @@ impl SsTable {
     }
 
     // 找到一个可能包含 key 的 Block
-    pub fn find_block_idx(&self, key: Bytes) -> usize{
+    pub fn find_block_idx(&self, key: KeySlice) -> usize{
         self.block_meta
-            .partition_point(|meta| meta.first_key <= key)
+            .partition_point(|meta| meta.first_key.as_key_slice() <= key)
             .saturating_sub(1)
     }
 
@@ -182,12 +183,12 @@ impl SsTable {
         self.block_meta.len()
     }
 
-    pub fn first_key(&self) -> Bytes {
-        self.first_key.clone()
+    pub fn first_key(&self) -> &KeyBytes {
+        &self.first_key
     }
 
-    pub fn last_key(&self) -> Bytes {
-        self.last_key.clone()
+    pub fn last_key(&self) -> &KeyBytes {
+        &self.last_key
     }
 
     pub fn table_size(&self) -> u64 {
@@ -205,6 +206,7 @@ mod test {
     use bytes::Bytes;
     use tempfile::{TempDir, tempdir};
     use crate::engines::lsm::iterators::StorageIterator;
+    use crate::engines::lsm::key::{KeyBytes, KeySlice};
     use crate::engines::lsm::table::{BlockMeta, SsTable};
     use crate::engines::lsm::table::builder::SsTableBuilder;
     use crate::engines::lsm::table::iterator::SsTableIterator;
@@ -214,13 +216,13 @@ mod test {
         let origin_block_meta = vec![
             BlockMeta{
                 offset: 0,
-                first_key: Bytes::from("key1"),
-                last_key:Bytes::from("key2")
+                first_key: KeyBytes::for_testing_from_bytes_no_ts(Bytes::from("key1")),
+                last_key:KeyBytes::for_testing_from_bytes_no_ts(Bytes::from("key2"))
             },
             BlockMeta{
                 offset: 1,
-                first_key: Bytes::from("key3"),
-                last_key:Bytes::from("key4")
+                first_key: KeyBytes::for_testing_from_bytes_no_ts(Bytes::from("key3")),
+                last_key:KeyBytes::for_testing_from_bytes_no_ts(Bytes::from("key4"))
             }
         ];
         let mut buf = Vec::new();
@@ -246,7 +248,7 @@ mod test {
         for idx in 0..num_of_keys() {
             let key = key_of(idx);
             let value = value_of(idx);
-            builder.add(&key[..], &value[..]);
+            builder.add(KeySlice::for_testing_from_slice_no_ts(&key[..]), &value[..]);
         }
         let dir = tempdir().unwrap();
         let path = dir.path().join("1.sst");
@@ -266,11 +268,11 @@ mod test {
         assert_eq!(new_sst.block_meta, meta);
         assert_eq!(
             new_sst.first_key(),
-            key_of(0)
+            &KeyBytes::for_testing_from_bytes_no_ts(key_of(0))
         );
         assert_eq!(
             new_sst.last_key(),
-            key_of(num_of_keys() - 1)
+            &KeyBytes::for_testing_from_bytes_no_ts(key_of(num_of_keys() - 1))
         );
     }
 
@@ -311,7 +313,7 @@ mod test {
     fn test_sst_seek_key() {
         let (_dir, sst) = generate_sst();
         let sst = Arc::new(sst);
-        let mut iter = SsTableIterator::create_and_seek_to_key(sst, key_of(0)).unwrap();
+        let mut iter = SsTableIterator::create_and_seek_to_key(sst, KeySlice::for_testing_from_slice_no_ts(key_of(0).as_ref())).unwrap();
         for offset in 1..=5 {
             for i in 0..num_of_keys() {
                 let key = iter.key();
@@ -330,9 +332,9 @@ mod test {
                     as_bytes(&value_of(i)),
                     as_bytes(value)
                 );
-                iter.seek_to_key(Bytes::copy_from_slice(&format!("key_{:03}", i * 5 + offset).as_bytes())).unwrap();
+                iter.seek_to_key(KeySlice::for_testing_from_slice_no_ts(&format!("key_{:03}", i * 5 + offset).as_bytes())).unwrap();
             }
-            iter.seek_to_key(Bytes::copy_from_slice(b"k"))
+            iter.seek_to_key(KeySlice::for_testing_from_slice_no_ts(b"k"))
                 .unwrap();
         }
     }

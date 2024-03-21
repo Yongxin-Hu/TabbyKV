@@ -3,6 +3,7 @@ use anyhow::bail;
 use bytes::Bytes;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 use crate::engines::lsm::iterators::StorageIterator;
+use crate::engines::lsm::key::{KeyBytes, KeySlice};
 use crate::engines::lsm::storage::LsmStorageInner;
 use crate::engines::lsm::storage::state::LsmStorageState;
 use crate::engines::lsm::table::iterator::SsTableIterator;
@@ -12,6 +13,30 @@ pub(crate) fn map_bound(bound: Bound<&[u8]>) -> Bound<Bytes> {
     match bound {
         Bound::Included(x) => Bound::Included(Bytes::copy_from_slice(x)),
         Bound::Excluded(x) => Bound::Excluded(Bytes::copy_from_slice(x)),
+        Bound::Unbounded => Bound::Unbounded,
+    }
+}
+
+// TODO will be remove
+pub(crate) fn map_bound_for_test(bound: Bound<&[u8]>) -> Bound<KeySlice> {
+    match bound {
+        Bound::Included(x) => Bound::Included(KeySlice::for_testing_from_slice_no_ts(x)),
+        Bound::Excluded(x) => Bound::Excluded(KeySlice::for_testing_from_slice_no_ts(x)),
+        Bound::Unbounded => Bound::Unbounded,
+    }
+}
+
+
+pub(crate) fn map_key_bound(bound: Bound<KeySlice>) -> Bound<KeyBytes> {
+    match bound {
+        Bound::Included(x) => Bound::Included(KeyBytes::from_bytes_with_ts(
+            Bytes::copy_from_slice(x.key_ref()),
+            x.ts(),
+        )),
+        Bound::Excluded(x) => Bound::Excluded(KeyBytes::from_bytes_with_ts(
+            Bytes::copy_from_slice(x.key_ref()),
+            x.ts(),
+        )),
         Bound::Unbounded => Bound::Unbounded,
     }
 }

@@ -7,6 +7,8 @@ use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
+use crate::engines::lsm::key::KeyBytes;
+
 pub struct Wal {
     file: Arc<Mutex<File>>,
 }
@@ -27,7 +29,7 @@ impl Wal {
     /// # 参数
     /// * path memtable 对应 WAL 文件路径
     /// * skiplist memtable 内的跳表
-    pub fn recover(path: impl AsRef<Path>, skiplist: &SkipMap<Bytes, Bytes>) -> Result<Self> {
+    pub fn recover(path: impl AsRef<Path>, skiplist: &SkipMap<KeyBytes, Bytes>) -> Result<Self> {
         let mut file = OpenOptions::new().read(true).open(path)?;
         let mut data = Vec::new();
         file.read_to_end(&mut data)?;
@@ -37,8 +39,8 @@ impl Wal {
             let mut hasher = crc32fast::Hasher::new();
             let key_len = data.get_u16();
             hasher.write_u16(key_len);
-            let key = Bytes::copy_from_slice(&data[..key_len as usize]);
-            hasher.write(&key);
+            let key = KeyBytes::for_testing_from_bytes_no_ts(Bytes::copy_from_slice(&data[..key_len as usize]));
+            hasher.write(key.key_ref());
             data.advance(key_len as usize);
             let value_len = data.get_u16();
             hasher.write_u16(value_len);
