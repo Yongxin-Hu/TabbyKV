@@ -339,7 +339,7 @@ impl LsmStorageInner{
                 level_sst.push(table);
             }
             let iter = SstConcatIterator::create_and_seek_to_key(
-                level_sst, Bytes::copy_from_slice(key))?;
+                level_sst, KeySlice::for_testing_from_slice_no_ts(key))?;
             level_iters.push(Box::new(iter))
         }
         let iter = TwoMergeIterator::create(l0_sstable_iter, MergeIterator::create(level_iters))?;
@@ -451,9 +451,9 @@ impl LsmStorageInner{
             }
 
             let level_iter = match lower{
-                Bound::Included(key) => SstConcatIterator::create_and_seek_to_key(level_ssts, Bytes::copy_from_slice(key))?,
+                Bound::Included(key) => SstConcatIterator::create_and_seek_to_key(level_ssts, KeySlice::for_testing_from_slice_no_ts(key))?,
                 Bound::Excluded(key) => {
-                    let mut iter = SstConcatIterator::create_and_seek_to_key(level_ssts, Bytes::copy_from_slice(key))?;
+                    let mut iter = SstConcatIterator::create_and_seek_to_key(level_ssts, KeySlice::for_testing_from_slice_no_ts(key))?;
                     if iter.is_valid() && iter.key() == key{
                         iter.next()?;
                     }
@@ -1125,7 +1125,7 @@ mod test{
         for key in 0..120 {
             let iter = SstConcatIterator::create_and_seek_to_key(
                 sstables.clone(),
-                Bytes::copy_from_slice(format!("{:05}", key).as_bytes()),
+                KeySlice::for_testing_from_slice_no_ts(format!("{:05}", key).as_bytes())
             ).unwrap();
             if key < 10 {
                 assert!(iter.is_valid());

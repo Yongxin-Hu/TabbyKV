@@ -4,6 +4,7 @@ use crate::engines::lsm::table::iterator::SsTableIterator;
 use crate::engines::lsm::table::SsTable;
 use anyhow::Result;
 use bytes::Bytes;
+use crate::engines::lsm::key::{KeyBytes, KeySlice};
 
 // 合并 key 没有重叠的 sstable_iterator, 减少不必要的 IO
 pub struct SstConcatIterator {
@@ -43,10 +44,10 @@ impl SstConcatIterator {
         Ok(iter)
     }
 
-    pub fn create_and_seek_to_key(sstables: Vec<Arc<SsTable>>, key: Bytes) -> Result<Self> {
+    pub fn create_and_seek_to_key(sstables: Vec<Arc<SsTable>>, key: KeySlice) -> Result<Self> {
         Self::check_sst_valid(&sstables);
         let idx: usize = sstables
-            .partition_point(|table| table.first_key() <= key)
+            .partition_point(|table| table.first_key().as_key_slice() <= key)
             .saturating_sub(1);
         if idx >= sstables.len() {
             return Ok(Self {

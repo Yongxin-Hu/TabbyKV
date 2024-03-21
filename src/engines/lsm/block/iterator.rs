@@ -183,7 +183,7 @@ mod test{
                 let key = iter.key();
                 let value = iter.value();
                 assert_eq!(
-                    key,
+                    key.key_ref(),
                     key_of(i).as_slice(),
                     "expected key: {:?}, actual key: {:?}",
                     as_bytes(key_of(i).as_slice()),
@@ -211,9 +211,9 @@ mod test{
         let encoded = block.encode();
         let decoded_block = Block::decode(&encoded);
         let mut block_iterator = BlockIterator::create_and_move_to_first(Arc::new(decoded_block));
-        assert_eq!(block_iterator.key(), b"key1");
+        assert_eq!(block_iterator.key().key_ref(), b"key1");
         block_iterator.next();
-        assert_eq!(block_iterator.key(), b"key2");
+        assert_eq!(block_iterator.key().key_ref(), b"key2");
         assert_eq!(block_iterator.value(), b"value2");
     }
 
@@ -226,7 +226,7 @@ mod test{
                 let key = iter.key();
                 let value = iter.value();
                 assert_eq!(
-                    key,
+                    key.key_ref(),
                     key_of(i).as_slice(),
                     "expected key: {:?}, actual key: {:?}",
                     as_bytes(key_of(i).as_slice()),
