@@ -329,11 +329,11 @@ mod test {
                 let key = iter.key();
                 let value = iter.value();
                 assert_eq!(
-                    key,
-                    key_of(i),
+                    key.key_ref(),
+                    key_of(i).as_ref(),
                     "expected key: {:?}, actual key: {:?}",
                     as_bytes(key_of(i).as_ref()),
-                    as_bytes(key.as_ref())
+                    as_bytes(key.key_ref())
                 );
                 assert_eq!(
                     value,
@@ -358,11 +358,11 @@ mod test {
                 let key = iter.key();
                 let value = iter.value();
                 assert_eq!(
-                    key,
-                    key_of(i),
+                    key.key_ref(),
+                    key_of(i).as_ref(),
                     "expected key: {:?}, actual key: {:?}",
                     as_bytes(key_of(i).as_ref()),
-                    as_bytes(key.as_ref())
+                    as_bytes(key.key_ref())
                 );
                 assert_eq!(
                     value,

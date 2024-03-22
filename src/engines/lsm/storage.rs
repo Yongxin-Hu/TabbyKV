@@ -343,7 +343,7 @@ impl LsmStorageInner{
             level_iters.push(Box::new(iter))
         }
         let iter = TwoMergeIterator::create(l0_sstable_iter, MergeIterator::create(level_iters))?;
-        if iter.is_valid() && iter.key() == key && !iter.value().is_empty() {
+        if iter.is_valid() && iter.key().key_ref() == key && !iter.value().is_empty() {
             return Ok(Some(Bytes::copy_from_slice(iter.value())))
         }
 
@@ -423,7 +423,7 @@ impl LsmStorageInner{
                         let mut iter_inner =
                             SsTableIterator::create_and_move_to_key(Arc::clone(table),
                                                                     KeySlice::for_testing_from_slice_no_ts(key))?;
-                        if iter_inner.is_valid() && iter_inner.key() == key {
+                        if iter_inner.is_valid() && iter_inner.key().key_ref() == key {
                             iter_inner.next()?;
                         }
                         iter_inner
@@ -454,7 +454,7 @@ impl LsmStorageInner{
                 Bound::Included(key) => SstConcatIterator::create_and_seek_to_key(level_ssts, KeySlice::for_testing_from_slice_no_ts(key))?,
                 Bound::Excluded(key) => {
                     let mut iter = SstConcatIterator::create_and_seek_to_key(level_ssts, KeySlice::for_testing_from_slice_no_ts(key))?;
-                    if iter.is_valid() && iter.key() == key{
+                    if iter.is_valid() && iter.key().key_ref() == key{
                         iter.next()?;
                     }
                     iter
@@ -1129,20 +1129,20 @@ mod test{
             ).unwrap();
             if key < 10 {
                 assert!(iter.is_valid());
-                assert_eq!(iter.key(), b"00010");
+                assert_eq!(iter.key().key_ref(), b"00010");
             } else if key >= 110 {
                 assert!(!iter.is_valid());
             } else {
                 assert!(iter.is_valid());
                 assert_eq!(
-                    iter.key(),
+                    iter.key().key_ref(),
                     format!("{:05}", key).as_bytes()
                 );
             }
         }
         let iter = SstConcatIterator::create_and_seek_to_first(sstables.clone()).unwrap();
         assert!(iter.is_valid());
-        assert_eq!(iter.key(), b"00010");
+        assert_eq!(iter.key().key_ref(), b"00010");
     }
 
     #[test]

@@ -18,7 +18,8 @@ impl <I: StorageIterator> FusedIterator<I>{
     }
 }
 impl <I: StorageIterator> StorageIterator for FusedIterator<I>{
-    type KeyType= I::KeyType;
+    type KeyType<'a> = I::KeyType<'a>
+        where Self: 'a;
 
     fn value(&self) -> &[u8] {
         if !self.is_valid() {
@@ -27,7 +28,7 @@ impl <I: StorageIterator> StorageIterator for FusedIterator<I>{
         self.iter.value()
     }
 
-    fn key(&self) -> Self::KeyType {
+    fn key(&self) -> Self::KeyType<'_> {
         if !self.is_valid() {
             panic!("some error occur.")
         }

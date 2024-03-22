@@ -10,7 +10,9 @@ pub struct TwoMergeIterator<T: StorageIterator, E: StorageIterator> {
     use_first: bool
 }
 
-impl <T: StorageIterator, E: StorageIterator> TwoMergeIterator<T, E>{
+impl <T: 'static + StorageIterator,
+      E: 'static + for<'a> StorageIterator<KeyType<'a> = T::KeyType<'a>>>
+TwoMergeIterator<T, E>{
     fn choose_iterator(first: &T, second: &E) -> bool{
         if !first.is_valid() {
             return false;
@@ -41,9 +43,9 @@ impl <T: StorageIterator, E: StorageIterator> TwoMergeIterator<T, E>{
 }
 
 impl <T: 'static + StorageIterator,
-    E: 'static + StorageIterator<KeyType=T::KeyType>> StorageIterator
-for TwoMergeIterator<T, E> {
-    type KeyType = T::KeyType;
+    E: 'static + for <'a> StorageIterator<KeyType<'a> = T::KeyType<'a>>>
+StorageIterator for TwoMergeIterator<T, E> {
+    type KeyType<'a> = T::KeyType<'a>;
 
     fn value(&self) -> &[u8] {
         if self.use_first {
@@ -53,7 +55,7 @@ for TwoMergeIterator<T, E> {
         }
     }
 
-    fn key(&self) -> T::KeyType {
+    fn key(&self) -> T::KeyType<'_> {
         if self.use_first {
             self.first.key()
         } else {

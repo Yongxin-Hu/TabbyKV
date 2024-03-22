@@ -106,11 +106,10 @@ impl CompactionController {
 
 impl LsmStorageInner {
 
-    fn compact_sst_by_merge_iter<I>(&self,
-                                    mut iter: I,
+    fn compact_sst_by_merge_iter(&self,
+                                    mut iter: impl for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>,
                                     compact_to_bottom_level: bool)
     -> Result<Vec<Arc<SsTable>>>
-    where I: StorageIterator
     {
         let mut sst_builder = None;
         let mut sst = Vec::new();
@@ -122,10 +121,10 @@ impl LsmStorageInner {
             let builder_inner = sst_builder.as_mut().unwrap();
             if compact_to_bottom_level{
                 if !iter.value().is_empty(){
-                    builder_inner.add(KeySlice::for_testing_from_slice_no_ts(iter.key()), iter.value());
+                    builder_inner.add(iter.key(), iter.value());
                 }
             } else {
-                builder_inner.add(KeySlice::for_testing_from_slice_no_ts(iter.key()), iter.value());
+                builder_inner.add(iter.key(), iter.value());
             }
 
             iter.next()?;

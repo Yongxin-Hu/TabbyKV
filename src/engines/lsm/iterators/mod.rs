@@ -6,13 +6,15 @@ pub mod concat_iterator;
 
 pub trait StorageIterator {
     // Key 关联类型
-    type KeyType: PartialEq + Eq + PartialOrd + Ord;
+    type KeyType<'a>: PartialEq + Eq + PartialOrd + Ord
+    where
+        Self: 'a;
 
     /// 获取当前 value
     fn value(&self) -> &[u8];
 
     /// 获取当前 key.
-    fn key(&self) -> Self::KeyType;
+    fn key(&self) -> Self::KeyType<'_>;
 
     /// 检查当前 iterator 是否有效
     fn is_valid(&self) -> bool;
