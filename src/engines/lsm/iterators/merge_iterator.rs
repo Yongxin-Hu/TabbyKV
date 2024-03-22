@@ -2,6 +2,7 @@ use std::cmp;
 use std::collections::binary_heap::PeekMut;
 use std::collections::BinaryHeap;
 use crate::engines::lsm::iterators::StorageIterator;
+use crate::engines::lsm::key::KeySlice;
 
 struct HeapWrapper<I: StorageIterator>(pub usize, pub Box<I>);
 
@@ -68,11 +69,12 @@ impl <I: StorageIterator> MergeIterator<I>{
 }
 
 impl <I: StorageIterator> StorageIterator for MergeIterator<I>{
+    type KeyType<'a> = KeySlice<'a>;
     fn value(&self) -> &[u8] {
         self.current.as_ref().unwrap().1.value()
     }
 
-    fn key(&self) -> &[u8] {
+    fn key(&self) -> KeySlice {
         self.current.as_ref().unwrap().1.key()
     }
 

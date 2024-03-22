@@ -40,8 +40,11 @@ impl <T: StorageIterator, E: StorageIterator> TwoMergeIterator<T, E>{
     }
 }
 
-impl <T: StorageIterator, E: StorageIterator> StorageIterator
+impl <T: 'static + StorageIterator,
+    E: 'static + StorageIterator<KeyType=T::KeyType>> StorageIterator
 for TwoMergeIterator<T, E> {
+    type KeyType = T::KeyType;
+
     fn value(&self) -> &[u8] {
         if self.use_first {
             self.first.value()
@@ -50,7 +53,7 @@ for TwoMergeIterator<T, E> {
         }
     }
 
-    fn key(&self) -> &[u8] {
+    fn key(&self) -> T::KeyType {
         if self.use_first {
             self.first.key()
         } else {

@@ -65,12 +65,14 @@ impl SsTableIterator {
 }
 
 impl StorageIterator for SsTableIterator {
+    type KeyType<'a> = KeySlice<'a>;
+
     fn value(&self) -> &[u8] {
         self.block_iterator.value()
     }
 
-    fn key(&self) -> &[u8] {
-        self.block_iterator.key().key_ref()
+    fn key(&self) -> KeySlice {
+        self.block_iterator.key()
     }
 
     fn is_valid(&self) -> bool {

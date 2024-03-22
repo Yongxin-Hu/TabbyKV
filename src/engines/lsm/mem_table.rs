@@ -150,13 +150,14 @@ impl MemTableIterator {
 }
 
 impl StorageIterator for MemTableIterator {
+    type KeyType<'a> = KeySlice<'a>;
 
     fn value(&self) -> &[u8] {
         &self.borrow_item().1[..]
     }
 
-    fn key(&self) -> &[u8] {
-        &self.borrow_item().0.key_ref()
+    fn key(&self) -> KeySlice {
+        self.borrow_item().0.as_key_slice()
     }
 
     fn is_valid(&self) -> bool {

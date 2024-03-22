@@ -1,5 +1,6 @@
 use anyhow::bail;
 use crate::engines::lsm::iterators::StorageIterator;
+use crate::engines::lsm::key::KeySlice;
 
 // A safe wrapper for StorageIterator
 // 确保 iter 调用时是 valid 的
@@ -17,6 +18,8 @@ impl <I: StorageIterator> FusedIterator<I>{
     }
 }
 impl <I: StorageIterator> StorageIterator for FusedIterator<I>{
+    type KeyType= I::KeyType;
+
     fn value(&self) -> &[u8] {
         if !self.is_valid() {
             panic!("some error occur.")
@@ -24,7 +27,7 @@ impl <I: StorageIterator> StorageIterator for FusedIterator<I>{
         self.iter.value()
     }
 
-    fn key(&self) -> &[u8] {
+    fn key(&self) -> Self::KeyType {
         if !self.is_valid() {
             panic!("some error occur.")
         }
