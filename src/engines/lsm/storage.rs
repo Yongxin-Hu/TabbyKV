@@ -22,7 +22,7 @@ use crate::engines::lsm::iterators::lsm_iterator::LsmIterator;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 use crate::engines::lsm::iterators::StorageIterator;
 use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
-use crate::engines::lsm::key::KeySlice;
+use crate::engines::lsm::key::{KeySlice, TS_RANGE_BEGIN};
 use crate::engines::lsm::manifest::{Manifest, ManifestRecord};
 use crate::engines::lsm::table::builder::SsTableBuilder;
 use crate::engines::lsm::table::iterator::SsTableIterator;
@@ -326,7 +326,7 @@ impl LsmStorageInner{
             ) && table.bloom_filter.may_contain(key){
                 l0_iter.push(Box::new(SsTableIterator::create_and_move_to_key(
                     table,
-                    KeySlice::for_testing_from_slice_no_ts(key)
+                    KeySlice::from_slice(key, TS_RANGE_BEGIN)
                 )?));
             }
         }
@@ -339,7 +339,7 @@ impl LsmStorageInner{
                 level_sst.push(table);
             }
             let iter = SstConcatIterator::create_and_seek_to_key(
-                level_sst, KeySlice::for_testing_from_slice_no_ts(key))?;
+                level_sst, KeySlice::from_slice(key, TS_RANGE_BEGIN))?;
             level_iters.push(Box::new(iter))
         }
         let iter = TwoMergeIterator::create(l0_sstable_iter, MergeIterator::create(level_iters))?;
@@ -417,12 +417,12 @@ impl LsmStorageInner{
             ){
                 let iter = match lower {
                     Bound::Included(key) => {
-                        SsTableIterator::create_and_move_to_key(Arc::clone(table), KeySlice::for_testing_from_slice_no_ts(key))?
+                        SsTableIterator::create_and_move_to_key(Arc::clone(table), KeySlice::from_slice(key, TS_RANGE_BEGIN))?
                     },
                     Bound::Excluded(key) => {
                         let mut iter_inner =
                             SsTableIterator::create_and_move_to_key(Arc::clone(table),
-                                                                    KeySlice::for_testing_from_slice_no_ts(key))?;
+                                                                    KeySlice::from_slice(key, TS_RANGE_BEGIN))?;
                         if iter_inner.is_valid() && iter_inner.key().key_ref() == key {
                             iter_inner.next()?;
                         }
@@ -451,9 +451,9 @@ impl LsmStorageInner{
             }
 
             let level_iter = match lower{
-                Bound::Included(key) => SstConcatIterator::create_and_seek_to_key(level_ssts, KeySlice::for_testing_from_slice_no_ts(key))?,
+                Bound::Included(key) => SstConcatIterator::create_and_seek_to_key(level_ssts, KeySlice::from_slice(key, TS_RANGE_BEGIN))?,
                 Bound::Excluded(key) => {
-                    let mut iter = SstConcatIterator::create_and_seek_to_key(level_ssts, KeySlice::for_testing_from_slice_no_ts(key))?;
+                    let mut iter = SstConcatIterator::create_and_seek_to_key(level_ssts, KeySlice::from_slice(key, TS_RANGE_BEGIN))?;
                     if iter.is_valid() && iter.key().key_ref() == key{
                         iter.next()?;
                     }
