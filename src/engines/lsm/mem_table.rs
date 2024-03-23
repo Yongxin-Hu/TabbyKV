@@ -61,8 +61,12 @@ impl MemTable {
     }
 
     /// 根据 key 获取 value
-    pub fn get(&self, key: &[u8]) -> Option<Bytes> {
-        match self.map.get(&KeyBytes::for_testing_from_bytes_no_ts(Bytes::copy_from_slice(key))){
+    pub fn get(&self, key: KeySlice) -> Option<Bytes> {
+        let key = KeyBytes::from_bytes_with_ts(
+            Bytes::copy_from_slice(key.key_ref()),
+            key.ts()
+        );
+        match self.map.get(&key){
             None => None,
             Some(t) => Some(t.value().clone())
         }
@@ -75,13 +79,13 @@ impl MemTable {
         self.approximate_size
             .fetch_add(estimated_size, std::sync::atomic::Ordering::Relaxed);
         if let Some(wal) = &self.wal {
-            wal.put(key.key_ref(), value)?;
+            wal.put(key, value)?;
         }
         self.sync_wal()?;
         Ok(())
     }
 
-    // 将 memtable 中的 kv-pair 加入 ss_table_builder
+    /// 将 memtable 中的 kv-pair 加入 ss_table_builder
     pub fn flush(&self, ss_table_builder: &mut SsTableBuilder) -> Result<()> {
         for entry in self.map.iter(){
             ss_table_builder.add(entry.key().as_key_slice(), &entry.value()[..]);
@@ -176,31 +180,6 @@ mod test{
     use crate::engines::lsm::iterators::StorageIterator;
     use crate::engines::lsm::key::KeySlice;
     use crate::engines::lsm::mem_table::MemTable;
-
-    #[test]
-    fn test_mem_table_get() {
-        let mem_table = MemTable::create(0);
-        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key1"), b"value1").unwrap();
-        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key2"), b"value2").unwrap();
-        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key3"), b"value3").unwrap();
-        assert_eq!(&mem_table.get(b"key1").unwrap()[..], b"value1");
-        assert_eq!(&mem_table.get(b"key2").unwrap()[..], b"value2");
-        assert_eq!(&mem_table.get(b"key3").unwrap()[..], b"value3");
-    }
-
-    #[test]
-    fn test_mem_table_overwrite() {
-        let mem_table = MemTable::create(0);
-        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key1"), b"value1").unwrap();
-        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key2"), b"value2").unwrap();
-        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key3"), b"value3").unwrap();
-        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key1"), b"value11").unwrap();
-        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key2"), b"value22").unwrap();
-        mem_table.put(KeySlice::for_testing_from_slice_no_ts(b"key3"), b"value33").unwrap();
-        assert_eq!(&mem_table.get(b"key1").unwrap()[..], b"value11");
-        assert_eq!(&mem_table.get(b"key2").unwrap()[..], b"value22");
-        assert_eq!(&mem_table.get(b"key3").unwrap()[..], b"value33");
-    }
 
     #[test]
     fn test_memtable_iter() {

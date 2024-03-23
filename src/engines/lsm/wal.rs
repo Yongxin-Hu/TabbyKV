@@ -7,7 +7,7 @@ use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
-use crate::engines::lsm::key::KeyBytes;
+use crate::engines::lsm::key::{KeyBytes, KeySlice};
 
 pub struct Wal {
     file: Arc<Mutex<File>>,
@@ -39,9 +39,11 @@ impl Wal {
             let mut hasher = crc32fast::Hasher::new();
             let key_len = data.get_u16();
             hasher.write_u16(key_len);
-            let key = KeyBytes::for_testing_from_bytes_no_ts(Bytes::copy_from_slice(&data[..key_len as usize]));
-            hasher.write(key.key_ref());
+            let key = &data[..key_len as usize];
             data.advance(key_len as usize);
+            hasher.write(key);
+            let ts = data.get_u64();
+            hasher.write_u64(ts);
             let value_len = data.get_u16();
             hasher.write_u16(value_len);
             let value = Bytes::copy_from_slice(&data[..value_len as usize]);
@@ -49,25 +51,26 @@ impl Wal {
             data.advance(value_len as usize);
             let checksum = data.get_u32();
             assert_eq!(checksum, hasher.finalize(), "checksum mismatch!");
-            skiplist.insert(key, value);
+            let key_bytes = KeyBytes::from_bytes_with_ts(Bytes::copy_from_slice(key), ts);
+            skiplist.insert(key_bytes, value);
         }
         Ok(Self{
             file: Arc::new(Mutex::new(file))
         })
     }
 
-    /// 向 WAL 中追加写入 [key_len(2byte), key , value_len(2byte), value]
-    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+    /// 向 WAL 中追加写入 [key_len(2byte), key , time_stamp, value_len(2byte), value]
+    pub fn put(&self, key: KeySlice, value: &[u8]) -> Result<()> {
         let mut hasher = crc32fast::Hasher::new();
         let mut data = Vec::new();
-        let key_len = key.len() as u16;
-        data.put_u16(key_len);
-        hasher.write_u16(key_len);
-        data.put_slice(key);
-        hasher.write(key);
-        let value_len = value.len() as u16;
-        data.put_u16(value_len);
-        hasher.write_u16(value_len);
+        data.put_u16(key.key_len() as u16);
+        hasher.write_u16(key.key_len() as u16);
+        data.put_slice(key.key_ref());
+        hasher.write(key.key_ref());
+        data.put_u64(key.ts());
+        hasher.write_u64(key.ts());
+        data.put_u16(value.len() as u16);
+        hasher.write_u16(value.len() as u16);
         data.put_slice(value);
         hasher.write(value);
         // checksum

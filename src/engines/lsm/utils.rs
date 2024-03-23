@@ -3,7 +3,7 @@ use anyhow::bail;
 use bytes::Bytes;
 use crate::engines::lsm::iterators::merge_iterator::MergeIterator;
 use crate::engines::lsm::iterators::StorageIterator;
-use crate::engines::lsm::key::{KeyBytes, KeySlice};
+use crate::engines::lsm::key::{KeyBytes, KeySlice, TS_RANGE_BEGIN, TS_RANGE_END};
 use crate::engines::lsm::storage::LsmStorageInner;
 use crate::engines::lsm::storage::state::LsmStorageState;
 use crate::engines::lsm::table::iterator::SsTableIterator;
@@ -18,10 +18,22 @@ pub(crate) fn map_bound(bound: Bound<&[u8]>) -> Bound<Bytes> {
 }
 
 // TODO will be remove
-pub(crate) fn map_bound_for_test(bound: Bound<&[u8]>) -> Bound<KeySlice> {
+pub(crate) fn map_bound_for_test(bound: Bound<&[u8]>, is_lower: bool) -> Bound<KeySlice> {
     match bound {
-        Bound::Included(x) => Bound::Included(KeySlice::for_testing_from_slice_no_ts(x)),
-        Bound::Excluded(x) => Bound::Excluded(KeySlice::for_testing_from_slice_no_ts(x)),
+        Bound::Included(x) => {
+            if is_lower{
+                return Bound::Included(KeySlice::from_slice(x, TS_RANGE_BEGIN));
+            }else{
+                return Bound::Included(KeySlice::from_slice(x, TS_RANGE_END));
+            }
+        },
+        Bound::Excluded(x) => {
+            if is_lower{
+                return Bound::Excluded(KeySlice::from_slice(x, TS_RANGE_BEGIN));
+            }else{
+                return Bound::Excluded(KeySlice::from_slice(x, TS_RANGE_END));
+            }
+        },
         Bound::Unbounded => Bound::Unbounded,
     }
 }
