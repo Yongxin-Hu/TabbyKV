@@ -25,6 +25,7 @@ use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::engines::lsm::key;
 use crate::engines::lsm::key::{KeySlice, TS_RANGE_BEGIN, TS_RANGE_END};
 use crate::engines::lsm::manifest::{Manifest, ManifestRecord};
+use crate::engines::lsm::mvcc::LsmMvccInner;
 use crate::engines::lsm::table::builder::SsTableBuilder;
 use crate::engines::lsm::table::iterator::SsTableIterator;
 use crate::engines::lsm::table::{FileObject, SsTable};
@@ -146,6 +147,7 @@ pub struct LsmStorageInner {
     pub(crate) block_cache: Arc<BlockCache>,
     pub(crate) options: Arc<LsmStorageOptions>,
     pub(crate) manifest: Option<Manifest>,
+    pub(crate) mvcc: Option<LsmMvccInner>,
     pub(crate) compaction_controller: CompactionController,
 }
 
@@ -194,6 +196,8 @@ impl LsmStorageInner{
     pub(crate) fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Self>{
         let path = path.as_ref();
         let mut state = LsmStorageState::create(&options);
+        // TODO
+        let mvcc = LsmMvccInner::new(0);
         let block_cache = Arc::new(BlockCache::new(1 << 20)); // 4GB block cache,
         let mut next_sst_id = 1usize;
         let compaction_controller = match &options.compaction_options {
@@ -289,6 +293,7 @@ impl LsmStorageInner{
             next_sst_id: AtomicUsize::new(next_sst_id),
             compaction_controller,
             block_cache,
+            mvcc: Some(mvcc),
             options: options.into(),
             manifest: Some(manifest)
         };
@@ -367,6 +372,8 @@ impl LsmStorageInner{
 
     /// 批量写入
     pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
+        let _lck = self.mvcc().write_lock.lock();
+        let ts = self.mvcc().latest_commit_ts() + 1;
         for record in batch {
             match record {
                 WriteBatchRecord::Put(key, value) => {
@@ -377,7 +384,7 @@ impl LsmStorageInner{
                     let size;
                     {
                         let guard = self.state.read();
-                        guard.active_memtable.put(KeySlice::for_testing_from_slice_no_ts(key), value)?;
+                        guard.active_memtable.put(KeySlice::from_slice(key, ts), value)?;
                         size = guard.active_memtable.approximate_size();
                     }
                     self.try_freeze(size)?;
@@ -388,13 +395,14 @@ impl LsmStorageInner{
                     let size;
                     {
                         let guard = self.state.read();
-                        guard.active_memtable.put(KeySlice::for_testing_from_slice_no_ts(key), b"")?;
+                        guard.active_memtable.put(KeySlice::from_slice(key, ts), b"")?;
                         size = guard.active_memtable.approximate_size();
                     }
                     self.try_freeze(size)?;
                 }
             }
         }
+        self.mvcc().update_commit_ts(ts);
         Ok(())
     }
 
