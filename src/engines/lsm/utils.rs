@@ -133,7 +133,7 @@ pub fn check_iter_result_by_key<I>(iter: &mut I, expected: Vec<(Bytes, Bytes)>)
         assert!(iter.is_valid());
         assert_eq!(
             k,
-            iter.key().for_testing_key_ref(),
+            iter.key().key_ref(),
             "expected key: {:?}, actual key: {:?}",
             k,
             as_bytes(iter.key().key_ref()),

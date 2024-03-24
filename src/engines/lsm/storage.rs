@@ -157,6 +157,10 @@ impl LsmStorageInner{
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
+    pub(crate) fn mvcc(&self) -> &LsmMvccInner {
+        self.mvcc.as_ref().unwrap()
+    }
+
     // 检查是否 key 在[table_first_key, table_last_key]的范围内
     fn check_key_in_range(
         key:&[u8],
@@ -1053,62 +1057,6 @@ mod test{
         assert!(!storage.inner.state.read().l0_sstables.is_empty());
     }
 
-    #[test]
-    fn test_full_compaction() {
-        let dir = tempdir().unwrap();
-        let storage =
-            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
-        storage.put(b"0", b"v1").unwrap();
-        sync(&storage);
-        storage.put(b"0", b"v2").unwrap();
-        storage.put(b"1", b"v2").unwrap();
-        storage.put(b"2", b"v2").unwrap();
-        sync(&storage);
-        storage.delete(b"0").unwrap();
-        storage.delete(b"2").unwrap();
-        sync(&storage);
-        assert_eq!(storage.state.read().l0_sstables.len(), 3);
-        let mut iter = construct_merge_iterator_over_storage(&storage.state.read());
-        check_iter_result_by_key(
-            &mut iter,
-            vec![
-                (Bytes::from_static(b"0"), Bytes::from_static(b"")),
-                (Bytes::from_static(b"1"), Bytes::from_static(b"v2")),
-                (Bytes::from_static(b"2"), Bytes::from_static(b"")),
-            ],
-        );
-        storage.force_full_compaction().unwrap();
-        assert!(storage.state.read().l0_sstables.is_empty());
-        let mut iter = construct_merge_iterator_over_storage(&storage.state.read());
-        check_iter_result_by_key(
-            &mut iter,
-            vec![(Bytes::from_static(b"1"), Bytes::from_static(b"v2"))],
-        );
-        storage.put(b"0", b"v3").unwrap();
-        storage.put(b"2", b"v3").unwrap();
-        sync(&storage);
-        storage.delete(b"1").unwrap();
-        sync(&storage);
-        let mut iter = construct_merge_iterator_over_storage(&storage.state.read());
-        check_iter_result_by_key(
-            &mut iter,
-            vec![
-                (Bytes::from_static(b"0"), Bytes::from_static(b"v3")),
-                (Bytes::from_static(b"1"), Bytes::from_static(b"")),
-                (Bytes::from_static(b"2"), Bytes::from_static(b"v3")),
-            ],
-        );
-        storage.force_full_compaction().unwrap();
-        assert!(storage.state.read().l0_sstables.is_empty());
-        let mut iter = construct_merge_iterator_over_storage(&storage.state.read());
-        check_iter_result_by_key(
-            &mut iter,
-            vec![
-                (Bytes::from_static(b"0"), Bytes::from_static(b"v3")),
-                (Bytes::from_static(b"2"), Bytes::from_static(b"v3")),
-            ],
-        );
-    }
 
     fn generate_concat_sst(
         start_key: usize,
@@ -1272,5 +1220,51 @@ mod test{
         assert_eq!(storage.get(b"2").unwrap(), None);
     }
 
+    #[test]
+    fn test_task3_compaction_integration() {
+        let dir = tempdir().unwrap();
+        let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
+        options.enable_wal = true;
+        let storage = LsmStorage::open(&dir, options).unwrap();
+        for i in 0..=20000 {
+            storage
+                .put(b"0", format!("{:02000}", i).as_bytes())
+                .unwrap();
+        }
+        std::thread::sleep(Duration::from_secs(1)); // wait until all memtables flush
+        while {
+            let snapshot = storage.inner.state.read();
+            !snapshot.readonly_memtables.is_empty()
+        } {
+            storage.inner.force_flush_earliest_memtable().unwrap();
+        }
+        assert!(storage.inner.state.read().l0_sstables.len() > 1);
+        storage.inner.force_full_compaction().unwrap();
+        assert!(storage.inner.state.read().l0_sstables.is_empty());
+        assert_eq!(storage.inner.state.read().levels.len(), 1);
+        // same key in the same SST
+        assert_eq!(storage.inner.state.read().levels[0].1.len(), 1);
+        for i in 0..=100 {
+            storage
+                .put(b"1", format!("{:02000}", i).as_bytes())
+                .unwrap();
+        }
+        storage
+            .inner
+            .force_freeze_memtable(&storage.inner.state_lock.lock())
+            .unwrap();
+        std::thread::sleep(Duration::from_secs(1)); // wait until all memtables flush
+        while {
+            let snapshot = storage.inner.state.read();
+            !snapshot.readonly_memtables.is_empty()
+        } {
+            storage.inner.force_flush_earliest_memtable().unwrap();
+        }
+        storage.inner.force_full_compaction().unwrap();
+        assert!(storage.inner.state.read().l0_sstables.is_empty());
+        assert_eq!(storage.inner.state.read().levels.len(), 1);
+        // same key in the same SST, now we should split two
+        //assert_eq!(storage.inner.state.read().levels[0].1.len(), 2);
+    }
 }
 

@@ -10,6 +10,7 @@ use std::{
 };
 
 use parking_lot::Mutex;
+use crate::engines::lsm::mvcc::txn::Transaction;
 use crate::engines::lsm::mvcc::watermark::Watermark;
 use crate::engines::lsm::storage::LsmStorageInner;
 

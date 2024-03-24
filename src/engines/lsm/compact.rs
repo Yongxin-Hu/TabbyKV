@@ -106,38 +106,45 @@ impl CompactionController {
 
 impl LsmStorageInner {
 
+    /// 合并 sst
+    /// # 参数
+    /// * iter: 需要合并的 sst iter
+    /// * compact_to_bottom_level: 合并到最底层
+    /// # 返回值
+    /// 新生成的 sst 文件
     fn compact_sst_by_merge_iter(&self,
                                     mut iter: impl for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>,
-                                    compact_to_bottom_level: bool)
+                                    _compact_to_bottom_level: bool)
     -> Result<Vec<Arc<SsTable>>>
     {
         let mut sst_builder = None;
         let mut sst = Vec::new();
-
+        let mut last_key = Vec::<u8>::new();
         while iter.is_valid() {
             if sst_builder.is_none(){
                 sst_builder = Some(SsTableBuilder::new(self.options.block_size));
             }
             let builder_inner = sst_builder.as_mut().unwrap();
-            if compact_to_bottom_level{
-                if !iter.value().is_empty(){
-                    builder_inner.add(iter.key(), iter.value());
-                }
-            } else {
-                builder_inner.add(iter.key(), iter.value());
-            }
+            let is_same_key = iter.key().key_ref() == last_key;
 
-            iter.next()?;
-
-            if builder_inner.estimated_size() >= self.options.target_sst_size {
+            if builder_inner.estimated_size() >= self.options.target_sst_size
+                && !is_same_key{
                 let sst_id = self.next_sst_id();
-                let builder = sst_builder.take().unwrap();
+                let old_builder = sst_builder.take().unwrap();
                 sst.push(
-                    Arc::new(builder.build(
+                    Arc::new(old_builder.build(
                         sst_id, Some(self.block_cache.clone()),self.path_of_sst(sst_id)
                     )?)
-                )
+                );
+                sst_builder = Some(SsTableBuilder::new(self.options.block_size));
             }
+            let builder_inner = sst_builder.as_mut().unwrap();
+            builder_inner.add(iter.key(), iter.value());
+            if !is_same_key {
+                last_key.clear();
+                last_key.extend(iter.key().key_ref());
+            }
+            iter.next()?;
         }
         if let Some(builder) = sst_builder{
             let sst_id = self.next_sst_id();
@@ -278,6 +285,7 @@ impl LsmStorageInner {
         Ok(())
     }
 
+    /// 触发合并 (Compaction 线程每 50 毫秒执行一次)
     fn trigger_compaction(&self) -> Result<()> {
         let snapshot = {
             let guard = self.state.read();
