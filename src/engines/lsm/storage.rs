@@ -26,6 +26,7 @@ use crate::engines::lsm::key;
 use crate::engines::lsm::key::{KeySlice, TS_RANGE_BEGIN, TS_RANGE_END};
 use crate::engines::lsm::manifest::{Manifest, ManifestRecord};
 use crate::engines::lsm::mvcc::LsmMvccInner;
+use crate::engines::lsm::mvcc::txn::TxnIterator;
 use crate::engines::lsm::table::builder::SsTableBuilder;
 use crate::engines::lsm::table::iterator::SsTableIterator;
 use crate::engines::lsm::table::{FileObject, SsTable};
@@ -149,6 +150,7 @@ pub struct LsmStorageInner {
     pub(crate) manifest: Option<Manifest>,
     pub(crate) mvcc: Option<LsmMvccInner>,
     pub(crate) compaction_controller: CompactionController,
+
 }
 
 impl LsmStorageInner{
@@ -304,7 +306,12 @@ impl LsmStorageInner{
         Ok(storage)
     }
 
-    pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+    pub fn get(self: &Arc<Self>, key: &[u8]) -> Result<Option<Bytes>> {
+        let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
+        txn.get(key)
+    }
+
+    pub(crate) fn get_with_ts(&self, key: &[u8], read_ts: u64) -> Result<Option<Bytes>> {
         let snapshot = {
             let guard = self.state.read();
             Arc::clone(&guard)
@@ -353,14 +360,17 @@ impl LsmStorageInner{
             level_iters.push(Box::new(iter))
         }
         let lsm_iter
-            = TwoMergeIterator::create(
-            TwoMergeIterator::create(memtable_iter, l0_sstable_iter)?,
-            MergeIterator::create(level_iters)
+            = LsmIterator::new(
+            TwoMergeIterator::create(
+                TwoMergeIterator::create(memtable_iter, l0_sstable_iter)?,
+                     MergeIterator::create(level_iters)
+            )?,
+            read_ts,
+            Bound::Unbounded,
         )?;
         if lsm_iter.is_valid() && lsm_iter.key().key_ref() == key && !lsm_iter.value().is_empty() {
             return Ok(Some(Bytes::copy_from_slice(lsm_iter.value())))
         }
-
         Ok(None)
     }
 
@@ -411,7 +421,13 @@ impl LsmStorageInner{
     }
 
 
-    pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<FusedIterator<LsmIterator>>{
+    pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator>{
+        let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
+        txn.scan(lower, upper)
+    }
+
+    fn scan_with_ts(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>, read_ts: u64,)
+        -> Result<FusedIterator<LsmIterator>> {
         let snapshot = {
             let guard = self.state.read();
             Arc::clone(&guard)
@@ -487,7 +503,8 @@ impl LsmStorageInner{
         let mem_and_l0_iter
             = TwoMergeIterator::create(mem_table_iters, l0_sstable_iters)?;
         let level_merge_iter = MergeIterator::create(level_iters);
-        let iters = LsmIterator::new(TwoMergeIterator::create(mem_and_l0_iter, level_merge_iter)?, end_bound)?;
+        let iters = LsmIterator::new(
+            TwoMergeIterator::create(mem_and_l0_iter, level_merge_iter)?, read_ts, end_bound)?;
         Ok(FusedIterator::new(iters))
     }
 

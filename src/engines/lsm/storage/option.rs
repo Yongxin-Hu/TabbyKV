@@ -10,6 +10,7 @@ pub struct LsmStorageOptions {
     pub compaction_options: CompactionOptions,
     // 是否启用 WAL
     pub enable_wal: bool,
+    pub serializable: bool,
 }
 
 impl Default for LsmStorageOptions{
