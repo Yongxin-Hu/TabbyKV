@@ -16,7 +16,7 @@ use crate::engines::lsm::utils::{map_bound, map_key_bound};
 pub struct MemTable {
     // 实际存储 KV-pair 的 SkipMap
     // TODO 用自己写的 SkipMap 替换
-    map: Arc<SkipMap<KeyBytes, Bytes>>,
+    pub(crate) map: Arc<SkipMap<KeyBytes, Bytes>>,
     // WAL 预写日志
     wal: Option<Wal>,
     id: usize,

@@ -29,7 +29,12 @@ pub struct BlockMeta {
 }
 
 impl BlockMeta {
-    pub fn encode_to_buf(block_meta: &[BlockMeta], buf: &mut Vec<u8>) {
+    /// 将 block_meta 编码到 buf
+    /// # 参数
+    /// * block_meta: block_meta
+    /// * max_ts:
+    /// * buf: block_meta 编码后的 Vec<u8>
+    pub fn encode_to_buf(block_meta: &[BlockMeta], max_ts: u64, buf: &mut Vec<u8>) {
         let estimated_size = Self::estimate_size(block_meta);
         // 预留足够大小
         buf.reserve(estimated_size);
@@ -52,12 +57,14 @@ impl BlockMeta {
             // last_key's time_stamp
             buf.put_u64(meta.last_key.ts());
         }
+        // max_ts
+        buf.put_u64(max_ts);
         // check sum
         buf.put_u32(crc32fast::hash(&buf[block_meta_start+4/* no of blocks */..]));
         assert_eq!(estimated_size, buf.len() - block_meta_start, "buf size incorrect!")
     }
 
-    pub fn decode_from_buf(mut buf: &[u8]) -> Result<Vec<BlockMeta>>{
+    pub fn decode_from_buf(mut buf: &[u8]) -> Result<(Vec<BlockMeta>, u64)>{
         let block_num = buf.get_u32() as usize;
         let mut metas = Vec::with_capacity(block_num);
         let checksum = crc32fast::hash(&buf[..buf.remaining() - 4]);
@@ -77,9 +84,10 @@ impl BlockMeta {
                 last_key
             })
         }
+        let max_ts = buf.get_u64();
         // checksum
         assert_eq!(buf.get_u32(), checksum, "meta checksum mismatched!");
-        Ok(metas)
+        Ok((metas, max_ts))
     }
 
     /// 计算 Blockmeta 的大小
@@ -97,7 +105,7 @@ impl BlockMeta {
             // The size of last_key
             estimated_size += meta.last_key.raw_len();
         }
-        //estimated_size += std::mem::size_of::<u64>(); // max timestamp
+        estimated_size += std::mem::size_of::<u64>(); // max timestamp
         estimated_size += std::mem::size_of::<u32>(); // checksum
         estimated_size
     }
@@ -146,7 +154,8 @@ pub struct SsTable {
     first_key: KeyBytes,
     last_key: KeyBytes,
     block_cache: Option<Arc<BlockCache>>,
-    pub(crate) bloom_filter: BloomFilter
+    pub(crate) bloom_filter: BloomFilter,
+    max_ts: u64
 }
 
 impl SsTable {
@@ -165,7 +174,7 @@ impl SsTable {
         let block_meta_offset = (&file.read(bloom_filter_offset-4, 4).unwrap()[..]).get_u32() as u64;
         let block_meta_data_len = file.1-block_meta_offset-4/* block_meta_offset */-(file.1-bloom_filter_offset) /*bloom filter data*/;
         let buf = file.read(block_meta_offset, block_meta_data_len)?;
-        let block_meta = BlockMeta::decode_from_buf(&buf)?;
+        let (block_meta, max_ts) = BlockMeta::decode_from_buf(&buf)?;
         /** recover block_meta end **/
         let first_key = block_meta.get(0).unwrap().first_key.clone();
         let last_key = block_meta.get(block_meta.len()-1).unwrap().last_key.clone();
@@ -177,7 +186,8 @@ impl SsTable {
             first_key,
             last_key,
             block_cache,
-            bloom_filter
+            bloom_filter,
+            max_ts
         })
     }
 
@@ -237,6 +247,10 @@ impl SsTable {
     pub fn sst_id(&self) -> usize {
         self.id
     }
+
+    pub fn max_ts(&self) -> u64 {
+        self.max_ts
+    }
 }
 
 #[cfg(test)]
@@ -265,8 +279,8 @@ mod test {
             }
         ];
         let mut buf = Vec::new();
-        BlockMeta::encode_to_buf(origin_block_meta.iter().clone().as_ref(), &mut buf);
-        let result = BlockMeta::decode_from_buf(&mut buf).unwrap();
+        BlockMeta::encode_to_buf(origin_block_meta.iter().clone().as_ref(), 0, &mut buf);
+        let (result, max_ts) = BlockMeta::decode_from_buf(&mut buf).unwrap();
         assert_eq!(origin_block_meta, result)
     }
 

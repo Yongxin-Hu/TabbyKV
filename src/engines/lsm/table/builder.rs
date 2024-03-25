@@ -18,7 +18,8 @@ pub struct SsTableBuilder {
     // 保存每个 block 的元信息
     pub(crate) meta: Vec<BlockMeta>,
     block_size: usize,
-    bloom_filter: BloomFilter
+    bloom_filter: BloomFilter,
+    max_ts: u64
 }
 
 
@@ -32,7 +33,8 @@ impl SsTableBuilder{
             data: Vec::new(),
             meta: Vec::new(),
             block_size,
-            bloom_filter: BloomFilter::new()
+            bloom_filter: BloomFilter::new(),
+            max_ts: 0
         }
     }
 
@@ -43,6 +45,10 @@ impl SsTableBuilder{
 
         if self.first_key.is_empty() {
             self.first_key.set_from_slice(key);
+        }
+
+        if key.ts() > self.max_ts {
+            self.max_ts = key.ts();
         }
 
         if self.block_builder.add(key, value) {
@@ -95,7 +101,7 @@ impl SsTableBuilder{
         //        |                         |                                              |
         //   complete_block        BlockMeta::encode_to_buf                       bloom_filter.encode_to_buf
         let block_meta_offset = self.data.len();
-        BlockMeta::encode_to_buf(self.meta.as_slice(), &mut self.data);
+        BlockMeta::encode_to_buf(self.meta.as_slice(), self.max_ts, &mut self.data);
         self.data.put_u32(block_meta_offset as u32);
         let bloom_filter_offset = self.data.len();
         self.bloom_filter.encode_to_buf(&mut self.data);
@@ -109,7 +115,8 @@ impl SsTableBuilder{
             block_meta_offset,
             block_cache,
             file,
-            bloom_filter: self.bloom_filter
+            bloom_filter: self.bloom_filter,
+            max_ts: self.max_ts
         })
     }
 }

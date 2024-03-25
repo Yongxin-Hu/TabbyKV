@@ -20,7 +20,8 @@ impl Default for LsmStorageOptions{
             target_sst_size: 2 << 20,   // 2M
             num_memtable_limit: 100,
             compaction_options: Default::default(),
-            enable_wal: true
+            enable_wal: true,
+            serializable: false,
         }
     }
 }
@@ -33,6 +34,7 @@ impl LsmStorageOptions {
             compaction_options: CompactionOptions::NoCompaction,
             enable_wal: false,
             num_memtable_limit: 50,
+            serializable: false,
         }
     }
 
@@ -43,6 +45,7 @@ impl LsmStorageOptions {
             compaction_options: CompactionOptions::NoCompaction,
             enable_wal: false,
             num_memtable_limit: 2,
+            serializable: false,
         }
     }
 
@@ -53,6 +56,7 @@ impl LsmStorageOptions {
             compaction_options,
             enable_wal: false,
             num_memtable_limit: 2,
+            serializable: false,
         }
     }
 }

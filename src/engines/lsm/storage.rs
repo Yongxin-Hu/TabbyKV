@@ -26,7 +26,7 @@ use crate::engines::lsm::key;
 use crate::engines::lsm::key::{KeySlice, TS_RANGE_BEGIN, TS_RANGE_END};
 use crate::engines::lsm::manifest::{Manifest, ManifestRecord};
 use crate::engines::lsm::mvcc::LsmMvccInner;
-use crate::engines::lsm::mvcc::txn::TxnIterator;
+use crate::engines::lsm::mvcc::txn::{Transaction, TxnIterator};
 use crate::engines::lsm::table::builder::SsTableBuilder;
 use crate::engines::lsm::table::iterator::SsTableIterator;
 use crate::engines::lsm::table::{FileObject, SsTable};
@@ -112,6 +112,10 @@ impl LsmStorage{
         }))
     }
 
+    pub fn new_txn(&self) -> Result<Arc<Transaction>> {
+        self.inner.new_txn()
+    }
+
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         self.inner.get(key)
     }
@@ -128,7 +132,7 @@ impl LsmStorage{
         &self,
         lower: Bound<&[u8]>,
         upper: Bound<&[u8]>,
-    ) -> Result<FusedIterator<LsmIterator>> {
+    ) -> Result<TxnIterator> {
         self.inner.scan(lower, upper)
     }
 }
@@ -161,6 +165,14 @@ impl LsmStorageInner{
 
     pub(crate) fn mvcc(&self) -> &LsmMvccInner {
         self.mvcc.as_ref().unwrap()
+    }
+
+    pub(crate) fn manifest(&self) -> &Manifest{
+        self.manifest.as_ref().unwrap()
+    }
+
+    pub fn new_txn(self: &Arc<Self>) -> Result<Arc<Transaction>> {
+        Ok(self.mvcc().new_txn(self.clone(), self.options.serializable))
     }
 
     // 检查是否 key 在[table_first_key, table_last_key]的范围内
@@ -202,8 +214,6 @@ impl LsmStorageInner{
     pub(crate) fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Self>{
         let path = path.as_ref();
         let mut state = LsmStorageState::create(&options);
-        // TODO
-        let mvcc = LsmMvccInner::new(0);
         let block_cache = Arc::new(BlockCache::new(1 << 20)); // 4GB block cache,
         let mut next_sst_id = 1usize;
         let compaction_controller = match &options.compaction_options {
@@ -224,6 +234,7 @@ impl LsmStorageInner{
         }
         let manifest;
         let manifest_path = path.join("MANIFEST");
+        let mut last_commit_ts = 0;
         if manifest_path.exists() {
             // 根据 Manifest 恢复 state
             let (m, records) = Manifest::recover(manifest_path)?;
@@ -258,6 +269,7 @@ impl LsmStorageInner{
                     Some(block_cache.clone()),
                     FileObject::open(Self::path_of_sst_static(path, sst_id).as_path())?
                 )?;
+                last_commit_ts = last_commit_ts.max(sst.max_ts());
                 state.sstables.insert(sst_id, Arc::new(sst));
             }
 
@@ -267,6 +279,12 @@ impl LsmStorageInner{
                 for id in mem_table{
                     let mem_table
                         = MemTable::recover_from_wal(id, Self::path_of_wal_static(path, id))?;
+                    let max_ts = mem_table
+                        .map
+                        .iter()
+                        .map(|x| x.key().ts())
+                        .max()
+                        .unwrap_or_default();
                     if !mem_table.is_empty() {
                         state.readonly_memtables.insert(0, Arc::new(mem_table));
                     }
@@ -299,7 +317,7 @@ impl LsmStorageInner{
             next_sst_id: AtomicUsize::new(next_sst_id),
             compaction_controller,
             block_cache,
-            mvcc: Some(mvcc),
+            mvcc: Some(LsmMvccInner::new(last_commit_ts)),
             options: options.into(),
             manifest: Some(manifest)
         };
@@ -368,7 +386,7 @@ impl LsmStorageInner{
             read_ts,
             Bound::Unbounded,
         )?;
-        if lsm_iter.is_valid() && lsm_iter.key().key_ref() == key && !lsm_iter.value().is_empty() {
+        if lsm_iter.is_valid() && lsm_iter.key() == key && !lsm_iter.value().is_empty() {
             return Ok(Some(Bytes::copy_from_slice(lsm_iter.value())))
         }
         Ok(None)
@@ -426,7 +444,7 @@ impl LsmStorageInner{
         txn.scan(lower, upper)
     }
 
-    fn scan_with_ts(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>, read_ts: u64,)
+    pub(crate) fn scan_with_ts(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>, read_ts: u64,)
         -> Result<FusedIterator<LsmIterator>> {
         let snapshot = {
             let guard = self.state.read();
@@ -652,15 +670,16 @@ mod test{
         let dir = tempdir().unwrap();
         let storage =
             LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap();
-        assert_eq!(&storage.get(b"0").unwrap(), &None);
+        let storage = Arc::new(storage);
+        assert_eq!(&Arc::clone(&storage).get(b"0").unwrap(), &None);
         storage.put(b"1", b"233").unwrap();
         storage.put(b"2", b"2333").unwrap();
         storage.put(b"3", b"23333").unwrap();
-        assert_eq!(&storage.get(b"1").unwrap().unwrap()[..], b"233");
-        assert_eq!(&storage.get(b"2").unwrap().unwrap()[..], b"2333");
-        assert_eq!(&storage.get(b"3").unwrap().unwrap()[..], b"23333");
+        assert_eq!(&Arc::clone(&storage).get(b"1").unwrap().unwrap()[..], b"233");
+        assert_eq!(&Arc::clone(&storage).get(b"2").unwrap().unwrap()[..], b"2333");
+        assert_eq!(&Arc::clone(&storage).get(b"3").unwrap().unwrap()[..], b"23333");
         storage.delete(b"2").unwrap();
-        assert!(storage.get(b"2").unwrap().is_none());
+        assert!(storage.clone().get(b"2").unwrap().is_none());
         storage.delete(b"0").unwrap(); // should NOT report any error
     }
 
@@ -715,6 +734,7 @@ mod test{
         let dir = tempdir().unwrap();
         let storage =
             LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap();
+        let storage = Arc::new(storage);
         assert_eq!(&storage.get(b"0").unwrap(), &None);
         storage.put(b"1", b"233").unwrap();
         storage.put(b"2", b"2333").unwrap();
@@ -732,10 +752,10 @@ mod test{
         storage.put(b"1", b"233333").unwrap();
         storage.put(b"3", b"233333").unwrap();
         assert_eq!(storage.state.read().readonly_memtables.len(), 2);
-        assert_eq!(&storage.get(b"1").unwrap().unwrap()[..], b"233333");
-        assert_eq!(&storage.get(b"2").unwrap(), &None);
-        assert_eq!(&storage.get(b"3").unwrap().unwrap()[..], b"233333");
-        assert_eq!(&storage.get(b"4").unwrap().unwrap()[..], b"23333");
+        assert_eq!(&Arc::clone(&storage).get(b"1").unwrap().unwrap()[..], b"233333");
+        assert_eq!(&Arc::clone(&storage).get(b"2").unwrap(), &None);
+        assert_eq!(&Arc::clone(&storage).get(b"3").unwrap().unwrap()[..], b"233333");
+        assert_eq!(&Arc::clone(&storage).get(b"4").unwrap().unwrap()[..], b"23333");
     }
 
     #[test]
