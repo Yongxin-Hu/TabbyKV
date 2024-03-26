@@ -41,6 +41,7 @@ impl LsmMvccInner {
         }
     }
 
+    /// 最新提交的 time_stamp
     pub fn latest_commit_ts(&self) -> u64 {
         self.ts.lock().0
     }
@@ -49,12 +50,18 @@ impl LsmMvccInner {
         self.ts.lock().0 = ts;
     }
 
-    /// All ts (strictly) below this ts can be garbage collected.
+    /// 可以回收 time_stamp 小于此 time_stamp 的 key
     pub fn watermark(&self) -> u64 {
         let ts = self.ts.lock();
         ts.1.watermark().unwrap_or(ts.0)
     }
 
+    /// 创建一个事务
+    /// # 参数
+    /// * inner: LsmStorageInner
+    /// * serializable:
+    /// # 返回值
+    /// * Transaction
     pub fn new_txn(&self, inner: Arc<LsmStorageInner>, serializable: bool) -> Arc<Transaction> {
         let ts = self.ts.lock();
         let read_ts = ts.0;

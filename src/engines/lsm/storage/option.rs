@@ -1,5 +1,6 @@
 use crate::engines::lsm::compact::{LeveledCompactionOptions, SimpleLeveledCompactionOptions, TieredCompactionOptions};
 
+#[derive(Debug, Clone)]
 pub struct LsmStorageOptions {
     // Block 大小 (Byte)
     pub block_size: usize,
@@ -61,7 +62,7 @@ impl LsmStorageOptions {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum CompactionOptions {
     /// Leveled compaction with partial compaction + dynamic level support (= RocksDB's Leveled
     /// Compaction)

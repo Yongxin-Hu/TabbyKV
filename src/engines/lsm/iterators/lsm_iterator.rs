@@ -34,6 +34,7 @@ impl LsmIterator {
             prev_key: Vec::new()
         };
         iter.move_to_key()?;
+
         Ok(iter)
     }
 
