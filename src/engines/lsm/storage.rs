@@ -116,6 +116,10 @@ impl LsmStorage{
         self.inner.new_txn()
     }
 
+    pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
+        self.inner.write_batch(batch)
+    }
+
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         self.inner.get(key)
     }
@@ -487,7 +491,7 @@ impl LsmStorageInner{
                         let mut iter_inner =
                             SsTableIterator::create_and_move_to_key(Arc::clone(table),
                                                                     KeySlice::from_slice(key, TS_RANGE_BEGIN))?;
-                        if iter_inner.is_valid() && iter_inner.key().key_ref() == key {
+                        while iter_inner.is_valid() && iter_inner.key().key_ref() == key {
                             iter_inner.next()?;
                         }
                         iter_inner
@@ -520,7 +524,7 @@ impl LsmStorageInner{
                 Bound::Excluded(key) => {
                     let mut iter = SstConcatIterator::create_and_seek_to_key(
                         level_ssts, KeySlice::from_slice(key, TS_RANGE_BEGIN))?;
-                    if iter.is_valid() && iter.key().key_ref() == key{
+                    while iter.is_valid() && iter.key().key_ref() == key{
                         iter.next()?;
                     }
                     iter
@@ -670,7 +674,7 @@ mod test{
     use crate::engines::lsm::iterators::concat_iterator::SstConcatIterator;
     use crate::engines::lsm::iterators::StorageIterator;
     use crate::engines::lsm::key::KeySlice;
-    use crate::engines::lsm::storage::{LsmStorage, LsmStorageInner};
+    use crate::engines::lsm::storage::{LsmStorage, LsmStorageInner, WriteBatchRecord};
     use crate::engines::lsm::storage::option::{CompactionOptions, LsmStorageOptions};
     use crate::engines::lsm::table::builder::SsTableBuilder;
     use crate::engines::lsm::table::SsTable;
@@ -1565,7 +1569,7 @@ mod test{
     }
 
     #[test]
-    fn test_task3_sst_ts() {
+    fn test_sst_ts() {
         let mut builder = SsTableBuilder::new(16);
         builder.add(KeySlice::for_testing_from_slice_with_ts(b"11", 1), b"11");
         builder.add(KeySlice::for_testing_from_slice_with_ts(b"22", 2), b"22");
@@ -1576,6 +1580,141 @@ mod test{
         let dir = tempdir().unwrap();
         let sst = builder.build(0, None, dir.path().join("1.sst")).unwrap();
         assert_eq!(sst.max_ts(), 6);
+    }
+
+    #[test]
+    fn test_task2_snapshot_watermark() {
+        let dir = tempdir().unwrap();
+        let options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
+        let storage = LsmStorage::open(&dir, options.clone()).unwrap();
+        let txn1 = storage.new_txn().unwrap();
+        let txn2 = storage.new_txn().unwrap();
+        storage.put(b"233", b"23333").unwrap();
+        let txn3 = storage.new_txn().unwrap();
+        assert_eq!(storage.inner.mvcc().watermark(), txn1.read_ts);
+        drop(txn1);
+        assert_eq!(storage.inner.mvcc().watermark(), txn2.read_ts);
+        drop(txn2);
+        assert_eq!(storage.inner.mvcc().watermark(), txn3.read_ts);
+        drop(txn3);
+        assert_eq!(
+            storage.inner.mvcc().watermark(),
+            storage.inner.mvcc().latest_commit_ts()
+        );
+    }
+
+    #[test]
+    fn test_mvcc_compaction() {
+        let dir = tempdir().unwrap();
+        let options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
+        let storage = LsmStorage::open(&dir, options.clone()).unwrap();
+        let snapshot0 = storage.new_txn().unwrap();
+        storage
+            .write_batch(&[
+                WriteBatchRecord::Put(b"a", b"1"),
+                WriteBatchRecord::Put(b"b", b"1"),
+            ])
+            .unwrap();
+        let snapshot1 = storage.new_txn().unwrap();
+        storage
+            .write_batch(&[
+                WriteBatchRecord::Put(b"a", b"2"),
+                WriteBatchRecord::Put(b"d", b"2"),
+            ])
+            .unwrap();
+        let snapshot2 = storage.new_txn().unwrap();
+        storage
+            .write_batch(&[
+                WriteBatchRecord::Put(b"a", b"3"),
+                WriteBatchRecord::Del(b"d"),
+            ])
+            .unwrap();
+        let snapshot3 = storage.new_txn().unwrap();
+        storage
+            .write_batch(&[
+                WriteBatchRecord::Put(b"c", b"4"),
+                WriteBatchRecord::Del(b"a"),
+            ])
+            .unwrap();
+
+        storage.force_flush().unwrap();
+        storage.inner.force_full_compaction().unwrap();
+
+        let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read());
+        check_iter_result_by_key(
+            &mut iter,
+            vec![
+                (Bytes::from("a"), Bytes::new()),
+                (Bytes::from("a"), Bytes::from("3")),
+                (Bytes::from("a"), Bytes::from("2")),
+                (Bytes::from("a"), Bytes::from("1")),
+                (Bytes::from("b"), Bytes::from("1")),
+                (Bytes::from("c"), Bytes::from("4")),
+                (Bytes::from("d"), Bytes::new()),
+                (Bytes::from("d"), Bytes::from("2")),
+            ],
+        );
+
+        drop(snapshot0);
+        storage.inner.force_full_compaction().unwrap();
+
+        let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read());
+        check_iter_result_by_key(
+            &mut iter,
+            vec![
+                (Bytes::from("a"), Bytes::new()),
+                (Bytes::from("a"), Bytes::from("3")),
+                (Bytes::from("a"), Bytes::from("2")),
+                (Bytes::from("a"), Bytes::from("1")),
+                (Bytes::from("b"), Bytes::from("1")),
+                (Bytes::from("c"), Bytes::from("4")),
+                (Bytes::from("d"), Bytes::new()),
+                (Bytes::from("d"), Bytes::from("2")),
+            ],
+        );
+
+        drop(snapshot1);
+        storage.inner.force_full_compaction().unwrap();
+
+        let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read());
+        check_iter_result_by_key(
+            &mut iter,
+            vec![
+                (Bytes::from("a"), Bytes::new()),
+                (Bytes::from("a"), Bytes::from("3")),
+                (Bytes::from("a"), Bytes::from("2")),
+                (Bytes::from("b"), Bytes::from("1")),
+                (Bytes::from("c"), Bytes::from("4")),
+                (Bytes::from("d"), Bytes::new()),
+                (Bytes::from("d"), Bytes::from("2")),
+            ],
+        );
+
+        drop(snapshot2);
+        storage.inner.force_full_compaction().unwrap();
+
+        let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read());
+        check_iter_result_by_key(
+            &mut iter,
+            vec![
+                (Bytes::from("a"), Bytes::new()),
+                (Bytes::from("a"), Bytes::from("3")),
+                (Bytes::from("b"), Bytes::from("1")),
+                (Bytes::from("c"), Bytes::from("4")),
+            ],
+        );
+
+        drop(snapshot3);
+        storage.inner.force_full_compaction().unwrap();
+
+        let mut iter = construct_merge_iterator_over_storage(&storage.inner.state.read());
+        check_iter_result_by_key(
+            &mut iter,
+            vec![
+                (Bytes::from("b"), Bytes::from("1")),
+                (Bytes::from("c"), Bytes::from("4")),
+            ],
+        );
     }
 }
 
