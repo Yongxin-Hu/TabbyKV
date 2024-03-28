@@ -18,17 +18,24 @@ use crate::engines::lsm::iterators::lsm_iterator::LsmIterator;
 use crate::engines::lsm::iterators::StorageIterator;
 use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::engines::lsm::storage::LsmStorageInner;
+use crate::engines::lsm::utils::map_bound;
 
 pub struct Transaction {
+    /// 事务开始时的 ts
     pub(crate) read_ts: u64,
     pub(crate) inner: Arc<LsmStorageInner>,
+    /// 事务新数据缓存
     pub(crate) local_storage: Arc<SkipMap<Bytes, Bytes>>,
+    /// 事务是否已经被提交
     pub(crate) committed: Arc<AtomicBool>,
     pub(crate) key_hashes: Option<Mutex<(HashSet<u32>, HashSet<u32>)>>,
 }
 
 impl Transaction {
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+        if let Some(value) = self.local_storage.get(key){
+            return Ok(Some(value.key().clone()))
+        }
         self.inner.get_with_ts(key, self.read_ts)
     }
 
@@ -40,11 +47,11 @@ impl Transaction {
     }
 
     pub fn put(&self, key: &[u8], value: &[u8]) {
-        unimplemented!()
+        self.local_storage.insert(Bytes::copy_from_slice(key), Bytes::copy_from_slice(value));
     }
 
     pub fn delete(&self, key: &[u8]) {
-        unimplemented!()
+        self.local_storage.insert(Bytes::copy_from_slice(key), Bytes::new());
     }
 
     pub fn commit(&self) -> Result<()> {
