@@ -6,9 +6,11 @@ use std::{
     ops::Bound,
     sync::{atomic::AtomicBool, Arc},
 };
+use std::sync::atomic::Ordering;
 
 use anyhow::Result;
 use bytes::Bytes;
+use crossbeam_skiplist::map::Entry;
 use crossbeam_skiplist::SkipMap;
 use ouroboros::self_referencing;
 use parking_lot::Mutex;
@@ -40,9 +42,21 @@ impl Transaction {
     }
 
     pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
+
+        let mut local_storage_iterator = TxnLocalIteratorBuilder{
+            map: Arc::clone(&self.local_storage),
+            iter_builder: |map| map.range((map_bound(lower), map_bound(upper))),
+            item: (Bytes::new(), Bytes::new()),
+        }.build();
+        let entry = local_storage_iterator.with_iter_mut(|iter| TxnLocalIterator::entry_to_item(iter.next()));
+        local_storage_iterator.with_mut(|x| *x.item = entry);
+
         TxnIterator::create(
             self.clone(),
-            self.inner.scan_with_ts(lower, upper, self.read_ts)?
+            TwoMergeIterator::create(
+                local_storage_iterator,
+                self.inner.scan_with_ts(lower, upper, self.read_ts)?,
+            )?
         )
     }
 
@@ -55,7 +69,9 @@ impl Transaction {
     }
 
     pub fn commit(&self) -> Result<()> {
-        unimplemented!()
+        self.committed.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)?;
+        
+
     }
 }
 
@@ -66,50 +82,69 @@ impl Drop for Transaction {
 type SkipMapRangeIter<'a> =
 crossbeam_skiplist::map::Range<'a, Bytes, (Bound<Bytes>, Bound<Bytes>), Bytes, Bytes>;
 
+/// Txn本地提交数据缓存迭代器
 #[self_referencing]
 pub struct TxnLocalIterator {
-    /// Stores a reference to the skipmap.
+    /// 存储事务内部的修改数据缓存
     map: Arc<SkipMap<Bytes, Bytes>>,
     /// Stores a skipmap iterator that refers to the lifetime of `MemTableIterator` itself.
     #[borrows(map)]
     #[not_covariant]
     iter: SkipMapRangeIter<'this>,
-    /// Stores the current key-value pair.
+    /// 当前的 KV-Pair
     item: (Bytes, Bytes),
+}
+
+impl TxnLocalIterator {
+    fn entry_to_item(entry: Option<Entry<'_, Bytes, Bytes>>) -> (Bytes, Bytes) {
+        entry
+            .map(|x| (x.key().clone(), x.value().clone()))
+            .unwrap_or_else(|| (Bytes::new(), Bytes::new()))
+    }
 }
 
 impl StorageIterator for TxnLocalIterator {
     type KeyType<'a> = &'a [u8];
 
     fn value(&self) -> &[u8] {
-        unimplemented!()
+        &self.borrow_item().1[..]
     }
 
     fn key(&self) -> &[u8] {
-        unimplemented!()
+        &self.borrow_item().0[..]
     }
 
     fn is_valid(&self) -> bool {
-        unimplemented!()
+        self.borrow_item().0.is_empty()
     }
 
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        let entry = self.with_iter_mut(|iter| TxnLocalIterator::entry_to_item(iter.next()));
+        self.with_mut(|x| *x.item = entry);
+        Ok(())
     }
 }
 
 pub struct TxnIterator {
     _txn: Arc<Transaction>,
-    iter: FusedIterator<LsmIterator>,
+    iter: TwoMergeIterator<TxnLocalIterator, FusedIterator<LsmIterator>>,
 }
 
 impl TxnIterator {
     pub fn create(
         txn: Arc<Transaction>,
-        iter: FusedIterator<LsmIterator>
+        iter: TwoMergeIterator<TxnLocalIterator, FusedIterator<LsmIterator>>
     ) -> Result<Self> {
-        let iter = Self { _txn: txn, iter };
+        let mut iter = Self { _txn: txn, iter };
+        iter.skip_deletes()?;
         Ok(iter)
+    }
+
+    fn skip_deletes(&mut self) -> Result<()> {
+        while self.iter.is_valid() && self.iter.value().is_empty() {
+            self.iter.next()?;
+        }
+        Ok(())
     }
 }
 
@@ -130,6 +165,7 @@ impl StorageIterator for TxnIterator {
 
     fn next(&mut self) -> Result<()> {
         self.iter.next()?;
+        self.skip_deletes()?;
         Ok(())
     }
 }
