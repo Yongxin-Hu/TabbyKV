@@ -1,11 +1,9 @@
 use crate::engines::lsm::iterators::StorageIterator;
 use anyhow::Result;
 
-// 合并 memtable_iterator 和 sstable_iterator
+/// 先对 first进行迭代 再对 second 进行迭代
 pub struct TwoMergeIterator<T: StorageIterator, E: StorageIterator> {
-    // 用于 MergeIterator<memtable_iterator>
     first: T,
-    // 用于 MergeIterator<sstable_iterator>
     second: E,
     use_first: bool
 }

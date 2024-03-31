@@ -19,7 +19,7 @@ use crate::engines::lsm::iterators::fused_iterator::FusedIterator;
 use crate::engines::lsm::iterators::lsm_iterator::LsmIterator;
 use crate::engines::lsm::iterators::StorageIterator;
 use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
-use crate::engines::lsm::storage::LsmStorageInner;
+use crate::engines::lsm::storage::{LsmStorageInner, WriteBatchRecord};
 use crate::engines::lsm::utils::map_bound;
 
 pub struct Transaction {
@@ -35,14 +35,23 @@ pub struct Transaction {
 
 impl Transaction {
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
-        if let Some(value) = self.local_storage.get(key){
-            return Ok(Some(value.key().clone()))
+        if self.committed.load(Ordering::SeqCst){
+            panic!("Transaction already committed!");
+        }
+        if let Some(entry) = self.local_storage.get(key) {
+            if entry.value().is_empty() {
+                return Ok(None);
+            } else {
+                return Ok(Some(entry.value().clone()));
+            }
         }
         self.inner.get_with_ts(key, self.read_ts)
     }
 
     pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
-
+        if self.committed.load(Ordering::SeqCst){
+            panic!("Transaction already committed!");
+        }
         let mut local_storage_iterator = TxnLocalIteratorBuilder{
             map: Arc::clone(&self.local_storage),
             iter_builder: |map| map.range((map_bound(lower), map_bound(upper))),
@@ -61,17 +70,35 @@ impl Transaction {
     }
 
     pub fn put(&self, key: &[u8], value: &[u8]) {
+        if self.committed.load(Ordering::SeqCst){
+            panic!("Transaction already committed!");
+        }
         self.local_storage.insert(Bytes::copy_from_slice(key), Bytes::copy_from_slice(value));
     }
 
     pub fn delete(&self, key: &[u8]) {
+        if self.committed.load(Ordering::SeqCst){
+            panic!("Transaction already committed!");
+        }
         self.local_storage.insert(Bytes::copy_from_slice(key), Bytes::new());
     }
 
+    /// 提交事务
     pub fn commit(&self) -> Result<()> {
-        self.committed.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)?;
-        
-
+        // 设置提交状态 阻止其他操作
+        self.committed
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .expect("Transaction already committed!");
+        let mut batch = Vec::new();
+        for entry in self.local_storage.iter(){
+            if entry.value().is_empty() {
+                batch.push(WriteBatchRecord::Del(entry.key().clone()));
+            } else {
+                batch.push(WriteBatchRecord::Put(entry.key().clone(), entry.value().clone()))
+            }
+        }
+        self.inner.write_batch(batch.as_slice())?;
+        Ok(())
     }
 }
 
@@ -115,7 +142,7 @@ impl StorageIterator for TxnLocalIterator {
     }
 
     fn is_valid(&self) -> bool {
-        self.borrow_item().0.is_empty()
+        !self.borrow_item().0.is_empty()
     }
 
     fn next(&mut self) -> Result<()> {

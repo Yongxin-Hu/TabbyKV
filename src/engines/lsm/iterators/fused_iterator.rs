@@ -2,8 +2,7 @@ use anyhow::bail;
 use crate::engines::lsm::iterators::StorageIterator;
 use crate::engines::lsm::key::KeySlice;
 
-// A safe wrapper for StorageIterator
-// 确保 iter 调用时是 valid 的
+/// 确保 iter 调用时是 valid 的
 pub struct FusedIterator<I: StorageIterator>{
     iter: I,
     occur_error: bool
