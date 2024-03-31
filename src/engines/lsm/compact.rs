@@ -114,19 +114,45 @@ impl LsmStorageInner {
     /// 新生成的 sst 文件
     fn compact_sst_by_merge_iter(&self,
                                     mut iter: impl for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>,
-                                    _compact_to_bottom_level: bool)
+                                    compact_to_bottom_level: bool)
     -> Result<Vec<Arc<SsTable>>>
     {
         let mut sst_builder = None;
         let mut sst = Vec::new();
+        let watermark = self.mvcc().watermark();
         let mut last_key = Vec::<u8>::new();
+        let mut first_key_below_watermark = false;
         while iter.is_valid() {
             if sst_builder.is_none(){
                 sst_builder = Some(SsTableBuilder::new(self.options.block_size));
             }
             let builder_inner = sst_builder.as_mut().unwrap();
             let is_same_key = iter.key().key_ref() == last_key;
+            if !is_same_key {
+                first_key_below_watermark = true;
+            }
 
+            // 移除被删除且没有事务访问的旧版本 key
+            if compact_to_bottom_level
+                && !is_same_key
+                && iter.key().ts() <= watermark
+                && iter.value().is_empty()
+            {
+                last_key.clear();
+                last_key.extend(iter.key().key_ref());
+                iter.next()?;
+                first_key_below_watermark = false;
+                continue;
+            }
+
+            // 移除没有事务访问的旧版本 key
+            if is_same_key && iter.key().ts() <= watermark {
+                if !first_key_below_watermark {
+                    iter.next()?;
+                    continue;
+                }
+                first_key_below_watermark = false;
+            }
             if builder_inner.estimated_size() >= self.options.target_sst_size
                 && !is_same_key{
                 let sst_id = self.next_sst_id();

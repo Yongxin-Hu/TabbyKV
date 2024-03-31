@@ -116,6 +116,10 @@ impl LsmStorage{
         self.inner.new_txn()
     }
 
+    pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
+        self.inner.write_batch(batch)
+    }
+
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         self.inner.get(key)
     }
@@ -134,6 +138,18 @@ impl LsmStorage{
         upper: Bound<&[u8]>,
     ) -> Result<TxnIterator> {
         self.inner.scan(lower, upper)
+    }
+
+    // Only for test
+    pub fn force_flush(&self) -> Result<()> {
+        if !self.inner.state.read().active_memtable.is_empty() {
+            self.inner
+                .force_freeze_memtable(&self.inner.state_lock.lock())?;
+        }
+        if !self.inner.state.read().readonly_memtables.is_empty() {
+            self.inner.force_flush_earliest_memtable()?;
+        }
+        Ok(())
     }
 }
 
@@ -669,7 +685,7 @@ mod test{
     fn test_storage_integration() {
         let dir = tempdir().unwrap();
         let storage =
-            LsmStorageInner::open(dir.path(), LsmStorageOptions::for_test_1()).unwrap();
+            LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap();
         let storage = Arc::new(storage);
         assert_eq!(&Arc::clone(&storage).get(b"0").unwrap(), &None);
         storage.put(b"1", b"233").unwrap();
@@ -687,7 +703,7 @@ mod test{
     fn test_storage_integration_2() {
         let dir = tempdir().unwrap();
         let storage =
-            LsmStorageInner::open(dir.path(), LsmStorageOptions::for_test_1()).unwrap();
+            LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap();
         storage.put(b"1", b"233").unwrap();
         storage.put(b"2", b"2333").unwrap();
         storage.put(b"3", b"23333").unwrap();
@@ -711,7 +727,7 @@ mod test{
     #[test]
     fn test_task3_freeze_on_capacity() {
         let dir = tempdir().unwrap();
-        let mut options = LsmStorageOptions::for_test_1();
+        let mut options = LsmStorageOptions::default_for_week1_test();
         options.target_sst_size = 1024;
         options.num_memtable_limit = 1000;
         let storage = LsmStorageInner::open(dir.path(), options).unwrap();
@@ -733,7 +749,7 @@ mod test{
     fn test_storage_integration_3() {
         let dir = tempdir().unwrap();
         let storage =
-            LsmStorageInner::open(dir.path(), LsmStorageOptions::for_test_1()).unwrap();
+            LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap();
         let storage = Arc::new(storage);
         assert_eq!(&storage.get(b"0").unwrap(), &None);
         storage.put(b"1", b"233").unwrap();
@@ -762,7 +778,7 @@ mod test{
     fn test_integration() {
         let dir = tempdir().unwrap();
         let storage = Arc::new(
-            LsmStorageInner::open(dir.path(), LsmStorageOptions::for_test_1()).unwrap(),
+            LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap(),
         );
         storage.put(b"1", b"233").unwrap();
         storage.put(b"2", b"2333").unwrap();
@@ -818,7 +834,7 @@ mod test{
     fn test_integration_2() {
         let dir = tempdir().unwrap();
         let storage = Arc::new(
-            LsmStorageInner::open(dir.path(), LsmStorageOptions::for_test_1()).unwrap(),
+            LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap(),
         );
         storage.put(b"1", b"233").unwrap();
         storage.put(b"2", b"2333").unwrap();
@@ -858,7 +874,7 @@ mod test{
     fn test_storage_scan() {
         let dir = tempdir().unwrap();
         let storage =
-            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::for_test_1()).unwrap());
+            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
         storage.put(b"1", b"233").unwrap();
         storage.put(b"2", b"2333").unwrap();
         storage.put(b"00", b"2333").unwrap();
@@ -917,7 +933,7 @@ mod test{
     fn test_storage_get_1() {
         let dir = tempdir().unwrap();
         let storage =
-            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::for_test_1()).unwrap());
+            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
         storage.put(b"1", b"233").unwrap();
         storage.put(b"2", b"2333").unwrap();
         storage.put(b"00", b"2333").unwrap();
@@ -974,7 +990,7 @@ mod test{
     fn test_storage_scan_2() {
         let dir = tempdir().unwrap();
         let storage =
-            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::for_test_1()).unwrap());
+            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
         storage.put(b"0", b"2333333").unwrap();
         storage.put(b"00", b"2333333").unwrap();
         storage.put(b"4", b"23").unwrap();
@@ -1028,7 +1044,7 @@ mod test{
     fn test_storage_get_2() {
         let dir = tempdir().unwrap();
         let storage =
-            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::for_test_1()).unwrap());
+            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
         storage.put(b"0", b"2333333").unwrap();
         storage.put(b"00", b"2333333").unwrap();
         storage.put(b"4", b"23").unwrap();
@@ -1078,7 +1094,7 @@ mod test{
     #[test]
     fn test_auto_flush() {
         let dir = tempdir().unwrap();
-        let storage = LsmStorage::open(&dir, LsmStorageOptions::for_test_2()).unwrap();
+        let storage = LsmStorage::open(&dir, LsmStorageOptions::default_for_week1_day6_test()).unwrap();
 
         let value = "1".repeat(1024); // 1KB
 
@@ -1152,7 +1168,7 @@ mod test{
     fn test_integration_3() {
         let dir = tempdir().unwrap();
         let storage =
-            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::for_test_1()).unwrap());
+            Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());
         storage.put(b"0", b"2333333").unwrap();
         storage.put(b"00", b"2333333").unwrap();
         storage.put(b"4", b"23").unwrap();
@@ -1222,7 +1238,7 @@ mod test{
         let dir = tempdir().unwrap();
         let storage = LsmStorage::open(
             &dir,
-            LsmStorageOptions::for_test_3(compaction_options.clone()),
+            LsmStorageOptions::default_for_week2_test(compaction_options.clone()),
         ).unwrap();
         for i in 0..=20 {
             storage.put(b"0", format!("v{}", i).as_bytes()).unwrap();
@@ -1250,7 +1266,7 @@ mod test{
 
         let storage = LsmStorage::open(
             &dir,
-            LsmStorageOptions::for_test_3(compaction_options.clone()),
+            LsmStorageOptions::default_for_week2_test(compaction_options.clone()),
         ).unwrap();
         assert_eq!(storage.get(b"0").unwrap().unwrap().as_ref(), b"v20".as_slice());
         assert_eq!(storage.get(b"1").unwrap().unwrap().as_ref(), b"v20".as_slice());
@@ -1260,7 +1276,7 @@ mod test{
     #[test]
     fn test_task3_compaction_integration() {
         let dir = tempdir().unwrap();
-        let mut options = LsmStorageOptions::for_test_3(CompactionOptions::NoCompaction);
+        let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
         options.enable_wal = true;
         let storage = LsmStorage::open(&dir, options).unwrap();
         for i in 0..=20000 {
@@ -1302,72 +1318,6 @@ mod test{
         assert_eq!(storage.inner.state.read().levels.len(), 1);
         // same key in the same SST, now we should split two
         //assert_eq!(storage.inner.state.read().levels[0].1.len(), 2);
-    }
-
-    #[test]
-    fn test_txn_integration() {
-        let dir = tempdir().unwrap();
-        let options = LsmStorageOptions::for_test_3(CompactionOptions::NoCompaction);
-        let storage = LsmStorage::open(&dir, options.clone()).unwrap();
-        let txn1 = storage.new_txn().unwrap();
-        let txn2 = storage.new_txn().unwrap();
-        txn1.put(b"test1", b"233");
-        txn2.put(b"test2", b"233");
-        let iter = txn1.scan(Bound::Unbounded, Bound::Unbounded).unwrap();
-        check_lsm_iter_result_by_key(
-            &mut txn1.scan(Bound::Unbounded, Bound::Unbounded).unwrap(),
-            vec![(Bytes::from("test1"), Bytes::from("233"))],
-        );
-        check_lsm_iter_result_by_key(
-            &mut txn2.scan(Bound::Unbounded, Bound::Unbounded).unwrap(),
-            vec![(Bytes::from("test2"), Bytes::from("233"))],
-        );
-        let txn3 = storage.new_txn().unwrap();
-        check_lsm_iter_result_by_key(
-            &mut txn3.scan(Bound::Unbounded, Bound::Unbounded).unwrap(),
-            vec![],
-        );
-        txn1.commit().unwrap();
-        txn2.commit().unwrap();
-        check_lsm_iter_result_by_key(
-            &mut txn3.scan(Bound::Unbounded, Bound::Unbounded).unwrap(),
-            vec![],
-        );
-        drop(txn3);
-        check_lsm_iter_result_by_key(
-            &mut storage.scan(Bound::Unbounded, Bound::Unbounded).unwrap(),
-            vec![
-                (Bytes::from("test1"), Bytes::from("233")),
-                (Bytes::from("test2"), Bytes::from("233")),
-            ],
-        );
-        let txn4 = storage.new_txn().unwrap();
-        assert_eq!(txn4.get(b"test1").unwrap(), Some(Bytes::from("233")));
-        assert_eq!(txn4.get(b"test2").unwrap(), Some(Bytes::from("233")));
-        check_lsm_iter_result_by_key(
-            &mut txn4.scan(Bound::Unbounded, Bound::Unbounded).unwrap(),
-            vec![
-                (Bytes::from("test1"), Bytes::from("233")),
-                (Bytes::from("test2"), Bytes::from("233")),
-            ],
-        );
-        txn4.put(b"test2", b"2333");
-        assert_eq!(txn4.get(b"test1").unwrap(), Some(Bytes::from("233")));
-        assert_eq!(txn4.get(b"test2").unwrap(), Some(Bytes::from("2333")));
-        check_lsm_iter_result_by_key(
-            &mut txn4.scan(Bound::Unbounded, Bound::Unbounded).unwrap(),
-            vec![
-                (Bytes::from("test1"), Bytes::from("233")),
-                (Bytes::from("test2"), Bytes::from("2333")),
-            ],
-        );
-        txn4.delete(b"test2");
-        assert_eq!(txn4.get(b"test1").unwrap(), Some(Bytes::from("233")));
-        assert_eq!(txn4.get(b"test2").unwrap(), None);
-        check_lsm_iter_result_by_key(
-            &mut txn4.scan(Bound::Unbounded, Bound::Unbounded).unwrap(),
-            vec![(Bytes::from("test1"), Bytes::from("233"))],
-        );
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::engines::lsm::compact::{LeveledCompactionOptions, SimpleLeveledCompactionOptions, TieredCompactionOptions};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LsmStorageOptions {
     // Block 大小 (Byte)
     pub block_size: usize,
@@ -28,7 +28,7 @@ impl Default for LsmStorageOptions{
 }
 
 impl LsmStorageOptions {
-    pub fn for_test_1() -> Self {
+    pub fn default_for_week1_test() -> Self {
         Self {
             block_size: 4096,
             target_sst_size: 2 << 20,
@@ -39,7 +39,7 @@ impl LsmStorageOptions {
         }
     }
 
-    pub fn for_test_2() -> Self {
+    pub fn default_for_week1_day6_test() -> Self {
         Self {
             block_size: 4096,
             target_sst_size: 2 << 20,
@@ -50,7 +50,7 @@ impl LsmStorageOptions {
         }
     }
 
-    pub fn for_test_3(compaction_options: CompactionOptions) -> Self {
+    pub fn default_for_week2_test(compaction_options: CompactionOptions) -> Self {
         Self {
             block_size: 4096,
             target_sst_size: 1 << 20, // 1MB

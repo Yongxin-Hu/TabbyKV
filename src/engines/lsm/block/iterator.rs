@@ -117,8 +117,12 @@ impl BlockIterator{
         let key_overlap_len = data.get_u16() as usize;
         let rest_key_len = data.get_u16() as usize;
         let rest_key = &data[..rest_key_len];
+        self.key.clear();
+        self.key.append(&self.first_key.key_ref()[..key_overlap_len]);
+        self.key.append(rest_key);
         data.advance(rest_key_len);
-        data.advance(SIZEOF_U64);
+        let ts = data.get_u64();
+        self.key.set_ts(ts);
         // value
         let value_len = data.get_u16() as usize;
         let value_start = offset + 2 * SIZEOF_U16/* key_overlap_len+rest_key_len */
@@ -126,9 +130,6 @@ impl BlockIterator{
         let value_end = value_start + value_len;
 
         self.idx = index;
-        self.key.clear();
-        self.key.append(&self.first_key.key_ref()[..key_overlap_len]);
-        self.key.append(rest_key);
         self.value_range = (value_start, value_end);
     }
 }
