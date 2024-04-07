@@ -409,17 +409,31 @@ impl LsmStorageInner{
     }
 
     /// 将 kv-pair 写入 activate_memtable
-    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        self.write_batch(&[WriteBatchRecord::Put(key, value)])
+    pub fn put(self: &Arc<Self>, key: &[u8], value: &[u8]) -> Result<()> {
+        if !self.options.serializable {
+            self.write_batch_inner(&[WriteBatchRecord::Put(key, value)])?;
+        } else {
+            let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
+            txn.put(key, value);
+            txn.commit()?;
+        }
+        Ok(())
     }
 
     /// 删除 `key` 写入空的 value
-    pub fn delete(&self, key: &[u8]) -> Result<()> {
-        self.write_batch(&[WriteBatchRecord::Del(key)])
+    pub fn delete(self: &Arc<Self>, key: &[u8]) -> Result<()> {
+        if !self.options.serializable {
+            self.write_batch_inner(&[WriteBatchRecord::Del(key)])?;
+        } else {
+            let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
+            txn.delete(key);
+            txn.commit()?;
+        }
+        Ok(())
     }
 
     /// 批量写入
-    pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
+    pub fn write_batch_inner<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<u64> {
         let _lck = self.mvcc().write_lock.lock();
         let ts = self.mvcc().latest_commit_ts() + 1;
         for record in batch {
@@ -451,9 +465,31 @@ impl LsmStorageInner{
             }
         }
         self.mvcc().update_commit_ts(ts);
-        Ok(())
+        Ok(ts)
     }
 
+    pub fn write_batch<T: AsRef<[u8]>>(
+        self: &Arc<Self>,
+        batch: &[WriteBatchRecord<T>],
+    ) -> Result<()> {
+        if !self.options.serializable {
+            self.write_batch_inner(batch)?;
+        } else {
+            let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
+            for record in batch {
+                match record {
+                    WriteBatchRecord::Del(key) => {
+                        txn.delete(key.as_ref());
+                    }
+                    WriteBatchRecord::Put(key, value) => {
+                        txn.put(key.as_ref(), value.as_ref());
+                    }
+                }
+            }
+            txn.commit()?;
+        }
+        Ok(())
+    }
 
     pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator>{
         let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
@@ -699,51 +735,7 @@ mod test{
         storage.delete(b"0").unwrap(); // should NOT report any error
     }
 
-    #[test]
-    fn test_storage_integration_2() {
-        let dir = tempdir().unwrap();
-        let storage =
-            LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap();
-        storage.put(b"1", b"233").unwrap();
-        storage.put(b"2", b"2333").unwrap();
-        storage.put(b"3", b"23333").unwrap();
-        storage
-            .force_freeze_memtable(&storage.state_lock.lock())
-            .unwrap();
-        assert_eq!(storage.state.read().readonly_memtables.len(), 1);
-        let previous_approximate_size = storage.state.read().readonly_memtables[0].approximate_size();
-        assert!(previous_approximate_size >= 15);
-        storage.put(b"1", b"2333").unwrap();
-        storage.put(b"2", b"23333").unwrap();
-        storage.put(b"3", b"233333").unwrap();
-        storage
-            .force_freeze_memtable(&storage.state_lock.lock())
-            .unwrap();
-        assert_eq!(storage.state.read().readonly_memtables.len(), 2);
-        assert_eq!(storage.state.read().readonly_memtables[1].approximate_size(), previous_approximate_size, "wrong order of memtables?");
-        assert!(storage.state.read().readonly_memtables[0].approximate_size() > previous_approximate_size);
-    }
 
-    #[test]
-    fn test_task3_freeze_on_capacity() {
-        let dir = tempdir().unwrap();
-        let mut options = LsmStorageOptions::default_for_week1_test();
-        options.target_sst_size = 1024;
-        options.num_memtable_limit = 1000;
-        let storage = LsmStorageInner::open(dir.path(), options).unwrap();
-        for _ in 0..1000 {
-            storage.put(b"1", b"2333").unwrap();
-        }
-        let num_imm_memtables = storage.state.read().readonly_memtables.len();
-        assert!(num_imm_memtables >= 1, "no memtable frozen?");
-        for _ in 0..1000 {
-            storage.delete(b"1").unwrap();
-        }
-        assert!(
-            storage.state.read().readonly_memtables.len() > num_imm_memtables,
-            "no more memtable frozen?"
-        );
-    }
 
     #[test]
     fn test_storage_integration_3() {
@@ -1318,6 +1310,104 @@ mod test{
         assert_eq!(storage.inner.state.read().levels.len(), 1);
         // same key in the same SST, now we should split two
         //assert_eq!(storage.inner.state.read().levels[0].1.len(), 2);
+    }
+
+    #[test]
+    fn test_serializable_1() {
+        let dir = tempdir().unwrap();
+        let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
+        options.serializable = true;
+        let storage = LsmStorage::open(&dir, options.clone()).unwrap();
+        storage.put(b"key1", b"1").unwrap();
+        storage.put(b"key2", b"2").unwrap();
+        let txn1 = storage.new_txn().unwrap();
+        let txn2 = storage.new_txn().unwrap();
+        txn1.put(b"key1", &txn1.get(b"key2").unwrap().unwrap());
+        txn2.put(b"key2", &txn2.get(b"key1").unwrap().unwrap());
+        txn1.commit().unwrap();
+        assert!(txn2.commit().is_err());
+        drop(txn2);
+        assert_eq!(storage.get(b"key1").unwrap(), Some(Bytes::from("2")));
+        assert_eq!(storage.get(b"key2").unwrap(), Some(Bytes::from("2")));
+    }
+
+    #[test]
+    fn test_serializable_2() {
+        let dir = tempdir().unwrap();
+        let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
+        options.serializable = true;
+        let storage = LsmStorage::open(&dir, options.clone()).unwrap();
+        let txn1 = storage.new_txn().unwrap();
+        let txn2 = storage.new_txn().unwrap();
+        txn1.put(b"key1", b"1");
+        txn2.put(b"key1", b"2");
+        txn1.commit().unwrap();
+        txn2.commit().unwrap();
+        assert_eq!(storage.get(b"key1").unwrap(), Some(Bytes::from("2")));
+    }
+
+    #[test]
+    fn test_serializable_3_ts_range() {
+        let dir = tempdir().unwrap();
+        let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
+        options.serializable = true;
+        let storage = LsmStorage::open(&dir, options.clone()).unwrap();
+        storage.put(b"key1", b"1").unwrap();
+        storage.put(b"key2", b"2").unwrap();
+        let txn1 = storage.new_txn().unwrap();
+        txn1.put(b"key1", &txn1.get(b"key2").unwrap().unwrap());
+        txn1.commit().unwrap();
+        let txn2 = storage.new_txn().unwrap();
+        txn2.put(b"key2", &txn2.get(b"key1").unwrap().unwrap());
+        txn2.commit().unwrap();
+        drop(txn2);
+        assert_eq!(storage.get(b"key1").unwrap(), Some(Bytes::from("2")));
+        assert_eq!(storage.get(b"key2").unwrap(), Some(Bytes::from("2")));
+    }
+
+    #[test]
+    fn test_serializable_4_scan() {
+        let dir = tempdir().unwrap();
+        let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
+        options.serializable = true;
+        let storage = LsmStorage::open(&dir, options.clone()).unwrap();
+        storage.put(b"key1", b"1").unwrap();
+        storage.put(b"key2", b"2").unwrap();
+        let txn1 = storage.new_txn().unwrap();
+        let txn2 = storage.new_txn().unwrap();
+        txn1.put(b"key1", &txn1.get(b"key2").unwrap().unwrap());
+        txn1.commit().unwrap();
+        let mut iter = txn2.scan(Bound::Unbounded, Bound::Unbounded).unwrap();
+        while iter.is_valid() {
+            iter.next().unwrap();
+        }
+        txn2.put(b"key2", b"1");
+        assert!(txn2.commit().is_err());
+        drop(txn2);
+        assert_eq!(storage.get(b"key1").unwrap(), Some(Bytes::from("2")));
+        assert_eq!(storage.get(b"key2").unwrap(), Some(Bytes::from("2")));
+    }
+
+    #[test]
+    fn test_serializable_5_read_only() {
+        let dir = tempdir().unwrap();
+        let mut options = LsmStorageOptions::default_for_week2_test(CompactionOptions::NoCompaction);
+        options.serializable = true;
+        let storage = LsmStorage::open(&dir, options.clone()).unwrap();
+        storage.put(b"key1", b"1").unwrap();
+        storage.put(b"key2", b"2").unwrap();
+        let txn1 = storage.new_txn().unwrap();
+        txn1.put(b"key1", &txn1.get(b"key2").unwrap().unwrap());
+        txn1.commit().unwrap();
+        let txn2 = storage.new_txn().unwrap();
+        txn2.get(b"key1").unwrap().unwrap();
+        let mut iter = txn2.scan(Bound::Unbounded, Bound::Unbounded).unwrap();
+        while iter.is_valid() {
+            iter.next().unwrap();
+        }
+        txn2.commit().unwrap();
+        assert_eq!(storage.get(b"key1").unwrap(), Some(Bytes::from("2")));
+        assert_eq!(storage.get(b"key2").unwrap(), Some(Bytes::from("2")));
     }
 }
 

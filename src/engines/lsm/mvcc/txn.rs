@@ -8,7 +8,7 @@ use std::{
 };
 use std::sync::atomic::Ordering;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use bytes::Bytes;
 use crossbeam_skiplist::map::Entry;
 use crossbeam_skiplist::SkipMap;
@@ -19,6 +19,7 @@ use crate::engines::lsm::iterators::fused_iterator::FusedIterator;
 use crate::engines::lsm::iterators::lsm_iterator::LsmIterator;
 use crate::engines::lsm::iterators::StorageIterator;
 use crate::engines::lsm::iterators::two_merge_iterator::TwoMergeIterator;
+use crate::engines::lsm::mvcc::CommittedTxnData;
 use crate::engines::lsm::storage::{LsmStorageInner, WriteBatchRecord};
 use crate::engines::lsm::utils::map_bound;
 
@@ -30,6 +31,7 @@ pub struct Transaction {
     pub(crate) local_storage: Arc<SkipMap<Bytes, Bytes>>,
     /// 事务是否已经被提交
     pub(crate) committed: Arc<AtomicBool>,
+    /// 写入集和读取集
     pub(crate) key_hashes: Option<Mutex<(HashSet<u32>, HashSet<u32>)>>,
 }
 
@@ -37,6 +39,11 @@ impl Transaction {
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         if self.committed.load(Ordering::SeqCst){
             panic!("Transaction already committed!");
+        }
+        if let Some(guard) = &self.key_hashes {
+            let mut guard = guard.lock();
+            let (_, read_set) = &mut *guard;
+            read_set.insert(farmhash::hash32(key));
         }
         if let Some(entry) = self.local_storage.get(key) {
             if entry.value().is_empty() {
@@ -74,6 +81,11 @@ impl Transaction {
             panic!("Transaction already committed!");
         }
         self.local_storage.insert(Bytes::copy_from_slice(key), Bytes::copy_from_slice(value));
+        if let Some(key_hashes) = &self.key_hashes {
+            let mut key_hashes = key_hashes.lock();
+            let (write_hashes, _) = &mut *key_hashes;
+            write_hashes.insert(farmhash::hash32(key));
+        }
     }
 
     pub fn delete(&self, key: &[u8]) {
@@ -81,6 +93,11 @@ impl Transaction {
             panic!("Transaction already committed!");
         }
         self.local_storage.insert(Bytes::copy_from_slice(key), Bytes::new());
+        if let Some(key_hashes) = &self.key_hashes {
+            let mut key_hashes = key_hashes.lock();
+            let (write_hashes, _) = &mut *key_hashes;
+            write_hashes.insert(farmhash::hash32(key));
+        }
     }
 
     /// 提交事务
@@ -89,6 +106,29 @@ impl Transaction {
         self.committed
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .expect("Transaction already committed!");
+        let _commit_lock = self.inner.mvcc().commit_lock.lock();
+        let serializability_check;
+        if let Some(guard) = &self.key_hashes {
+            let guard = guard.lock();
+            let (write_set, read_set) = &*guard;
+            println!(
+                "commit txn: write_set: {:?}, read_set: {:?}",
+                write_set, read_set
+            );
+            if !write_set.is_empty() {
+                let committed_txns = self.inner.mvcc().committed_txns.lock();
+                for (_, txn_data) in committed_txns.range((self.read_ts + 1)..) {
+                    for key_hash in read_set {
+                        if txn_data.key_hashes.contains(key_hash) {
+                            bail!("serializable check failed");
+                        }
+                    }
+                }
+            }
+            serializability_check = true;
+        } else {
+            serializability_check = false;
+        }
         let mut batch = Vec::new();
         for entry in self.local_storage.iter(){
             if entry.value().is_empty() {
@@ -97,7 +137,32 @@ impl Transaction {
                 batch.push(WriteBatchRecord::Put(entry.key().clone(), entry.value().clone()))
             }
         }
-        self.inner.write_batch(batch.as_slice())?;
+        let ts = self.inner.write_batch_inner(&batch)?;
+        if serializability_check {
+            let mut committed_txns = self.inner.mvcc().committed_txns.lock();
+            let mut key_hashes = self.key_hashes.as_ref().unwrap().lock();
+            let (write_set, _) = &mut *key_hashes;
+
+            let old_data = committed_txns.insert(
+                ts,
+                CommittedTxnData {
+                    key_hashes: std::mem::take(write_set),
+                    read_ts: self.read_ts,
+                    commit_ts: ts,
+                },
+            );
+            assert!(old_data.is_none());
+
+            // remove unneeded txn data
+            let watermark = self.inner.mvcc().watermark();
+            while let Some(entry) = committed_txns.first_entry() {
+                if *entry.key() < watermark {
+                    entry.remove();
+                } else {
+                    break;
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -155,7 +220,7 @@ impl StorageIterator for TxnLocalIterator {
 }
 
 pub struct TxnIterator {
-    _txn: Arc<Transaction>,
+    txn: Arc<Transaction>,
     iter: TwoMergeIterator<TxnLocalIterator, FusedIterator<LsmIterator>>,
 }
 
@@ -164,8 +229,11 @@ impl TxnIterator {
         txn: Arc<Transaction>,
         iter: TwoMergeIterator<TxnLocalIterator, FusedIterator<LsmIterator>>
     ) -> Result<Self> {
-        let mut iter = Self { _txn: txn, iter };
+        let mut iter = Self { txn, iter };
         iter.skip_deletes()?;
+        if iter.is_valid() {
+            iter.add_to_read_set(iter.key());
+        }
         Ok(iter)
     }
 
@@ -174,6 +242,14 @@ impl TxnIterator {
             self.iter.next()?;
         }
         Ok(())
+    }
+
+    fn add_to_read_set(&self, key: &[u8]) {
+        if let Some(guard) = &self.txn.key_hashes {
+            let mut guard = guard.lock();
+            let (_, read_set) = &mut *guard;
+            read_set.insert(farmhash::hash32(key));
+        }
     }
 }
 
@@ -195,6 +271,9 @@ impl StorageIterator for TxnIterator {
     fn next(&mut self) -> Result<()> {
         self.iter.next()?;
         self.skip_deletes()?;
+        if self.is_valid() {
+            self.add_to_read_set(self.key());
+        }
         Ok(())
     }
 }

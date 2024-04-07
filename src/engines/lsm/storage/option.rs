@@ -62,7 +62,7 @@ impl LsmStorageOptions {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum CompactionOptions {
     /// Leveled compaction with partial compaction + dynamic level support (= RocksDB's Leveled
     /// Compaction)
