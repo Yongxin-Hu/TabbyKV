@@ -1,9 +1,11 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use anyhow::Result;
 use structopt::clap::arg_enum;
 use structopt::StructOpt;
+
 use tabby_kv::engines::LsmStore;
-use tabby_kv::server::Server;
-use anyhow::Result;
+use tabby_kv::servers::cli_server::CliServer;
 
 arg_enum! {
     #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -30,11 +32,11 @@ struct Arg{
 async fn main() -> Result<()>{
     let arg = Arg::from_args();
     // TODO temp
-    let dir = Path::new(r"D:\temp\db");
-    let mut server = Server::new(match arg.engine{
+    let dir = Path::new(r"D:\temp\db2");
+
+    let mut cli_server = CliServer::new(match arg.engine{
         EngineType::LsmStore => LsmStore::new(&dir)?
     });
-
-    server.run(&arg.host, &arg.port).await.expect("Error");
-    server.close()
+    cli_server.run(&arg.host, &arg.port).await.expect("Error");
+    Ok(())
 }

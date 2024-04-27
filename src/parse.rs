@@ -1,4 +1,5 @@
-use crate::common::{OpsError, Command};
+use crate::entity::command::Command;
+use crate::entity::errors::OpsError;
 
 pub struct Parse;
 

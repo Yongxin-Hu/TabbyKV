@@ -1,7 +1,9 @@
 use dialoguer::Input;
 use structopt::StructOpt;
-use tabby_kv::common::{Command, OpsError};
+
 use tabby_kv::client::Client;
+use tabby_kv::entity::command::Command;
+use tabby_kv::entity::errors::OpsError;
 use tabby_kv::parse::Parse;
 
 #[derive(Debug, StructOpt)]

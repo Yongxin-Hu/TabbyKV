@@ -1,8 +1,11 @@
 use std::io;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use crate::common::{Command, MetaData, OpsError, Request, Response};
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::entity::command::Command;
+use crate::entity::errors::OpsError;
+use crate::entity::request::Request;
+use crate::entity::response::Response;
 
 pub struct Client{
     reader: BufReader<TcpStream>,
@@ -20,16 +23,8 @@ impl Client{
     }
 
     pub fn send(&mut self, command: Command) -> Result<(), OpsError>{
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
         let request = Request{
-            command,
-            meta: MetaData {
-                timestamp,
-                expire: None
-            },
+            command
         };
         let request = serde_json::to_string(&request)?;
         self.writer.write(format!("{request}\n").as_bytes())?;

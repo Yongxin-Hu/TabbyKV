@@ -1,24 +1,28 @@
-use std::sync::{Arc};
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use crate::common::{Code, Command, MetaData, OpsError, Request, Response, Value, ValueObject};
 use crate::engines::Engine;
-use anyhow::{Error, Result};
+use crate::entity::command::Command;
+use crate::entity::commons::Code;
+use crate::entity::errors::OpsError;
+use crate::entity::request::Request;
+use crate::entity::response::{Response, Value, ValueObject};
+
 
 #[derive(Clone)]
-pub struct Server<E: Engine>{
+pub struct CliServer<E: Engine>{
     engine: E,
 }
 
-impl<E: Clone+Engine+Send + 'static> Server<E> {
+impl<E: Clone+Engine+Send + 'static> CliServer<E> {
     pub fn new(engine: E) -> Self{
-        Server{
+        CliServer{
             engine
         }
     }
 
-    pub async fn run(&mut self, host: &String, port: &String) -> Result<Response>{
+    pub async fn run(&mut self, host: &String, port: &String) -> anyhow::Result<Response> {
         let listener = TcpListener::bind(format!("{}:{}", host, port))
             .await.unwrap();
         let server = Arc::new(Mutex::new(self.clone()));
@@ -47,11 +51,7 @@ impl<E: Clone+Engine+Send + 'static> Server<E> {
                                 code: Code::OK,
                                 message,
                                 value: ValueObject{
-                                    value,
-                                    meta: MetaData {
-                                        timestamp: 0,
-                                        expire: None,
-                                    },
+                                    value
                                 },
                             };
                             let response = serde_json::to_string(&response).expect("Serde json error!");
@@ -63,11 +63,7 @@ impl<E: Clone+Engine+Send + 'static> Server<E> {
                                 code: Code::Err,
                                 message: e.to_string(),
                                 value: ValueObject{
-                                    value: Value::Empty,
-                                    meta: MetaData {
-                                        timestamp: 0,
-                                        expire: None,
-                                    },
+                                    value: Value::Empty
                                 },
                             };
                             let response = serde_json::to_string(&response).expect("Serde json error!");
@@ -77,11 +73,10 @@ impl<E: Clone+Engine+Send + 'static> Server<E> {
                     };
                 }
             });
-
         }
     }
 
-    fn process(&mut self, command: Command) -> Result<(String, Value)>{
+    fn process(&mut self, command: Command) -> anyhow::Result<(String, Value)> {
         match command{
             Command::Get(key) => {
                 let value = self.engine.get(&key)?;
@@ -101,8 +96,10 @@ impl<E: Clone+Engine+Send + 'static> Server<E> {
             _ => {Err(OpsError::EmptyCommand.into())}
         }
     }
+}
 
-    pub fn close(&self) -> Result<()> {
-        self.engine.close()
+impl<E:Engine> Drop for CliServer<E>{
+    fn drop(&mut self) {
+        self.engine.close();
     }
 }
