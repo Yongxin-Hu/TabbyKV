@@ -1,12 +1,12 @@
-mod lsm;
-
-use std::collections::HashMap;
-use std::panic::set_hook;
 use std::path::Path;
 use std::sync::Arc;
-use crate::engines::lsm::storage::LsmStorage;
+
 use anyhow::Result;
+
+use crate::engines::lsm::storage::LsmStorage;
 use crate::engines::lsm::storage::option::LsmStorageOptions;
+
+mod lsm;
 
 pub trait Engine{
     /// 设置 key value

@@ -1,0 +1,21 @@
+syntax = "proto3";
+package tabbykv;
+
+message Command{
+  int32 code = 1; // 1:get, 2:put, 3:delete
+  string key = 2;
+  string value = 3;
+}
+
+message Req{
+  Command command = 1;
+}
+
+message Res{
+  int32 code = 1; // 1: OK, 2: key not found, 3: error
+  string message = 2;
+}
+
+service TabbykvRpc{
+  rpc Service(Req) returns (Res) {}
+}

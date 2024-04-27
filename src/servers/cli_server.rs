@@ -30,7 +30,6 @@ impl<E: Clone+Engine+Send + 'static> CliServer<E> {
             let (mut socket, socket_addr) = listener.accept().await.unwrap();
             let server_clone = Arc::clone(&server);
             tokio::spawn(async move {
-                println!("server count:{}", Arc::strong_count(&server_clone));
                 loop{
                     let (reader, writer) = socket.split();
                     let mut reader = BufReader::new(reader);
@@ -95,11 +94,5 @@ impl<E: Clone+Engine+Send + 'static> CliServer<E> {
             },
             _ => {Err(OpsError::EmptyCommand.into())}
         }
-    }
-}
-
-impl<E:Engine> Drop for CliServer<E>{
-    fn drop(&mut self) {
-        self.engine.close();
     }
 }
