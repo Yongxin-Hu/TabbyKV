@@ -28,7 +28,7 @@ impl<E:Clone+Engine+Send + 'static> TabbykvRpc for GrpcServer<E>{
         &self,
         request: Request<Req>
     ) -> Result<Response<Res>, Status> {
-        println!("Got a request: {:?}", request);
+
         let command = request.into_inner().command.unwrap();
 
         match command.code {
