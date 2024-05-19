@@ -12,7 +12,7 @@ pub struct LeveledCompactionTask {
     pub is_lower_level_bottom_level: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeveledCompactionOptions {
     pub level_size_multiplier: usize,
     pub level0_file_num_compaction_trigger: usize,

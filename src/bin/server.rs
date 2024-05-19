@@ -1,8 +1,11 @@
 use std::cell::RefCell;
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use structopt::clap::arg_enum;
 use structopt::StructOpt;
 use tonic::transport::Server;
@@ -11,6 +14,7 @@ use tabby_kv::engines::LsmStore;
 use tabby_kv::servers::cli_server::CliServer;
 use tabby_kv::servers::grpc_server::GrpcServer;
 use tabby_kv::servers::grpc_server::tabbykv::tabbykv_rpc_server::{TabbykvRpc, TabbykvRpcServer};
+use tabby_kv::engines::lsm::storage::option::LsmStorageOptions;
 
 arg_enum! {
     #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -46,14 +50,37 @@ struct Arg{
     engine: EngineType
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct Option{
+    #[cfg(target_os = "linux")]
+    #[serde(rename(deserialize = "linux"))]
+    path: String,
+    #[cfg(target_os = "windows")]
+    #[serde(rename(deserialize = "windows"))]
+    path: String,
+    lsm: LsmStorageOptions
+}
+
+fn init_config() -> Option {
+    let config_path = Path::new("config.json");
+
+    let mut file = File::open(config_path).expect("Config file not exist!");
+    let mut content = String::new();
+    file.read_to_string(&mut content).expect("Read config file fail!");
+    let option:Option = serde_json::from_str(&content).expect("Parse Option fail!");
+
+    option
+}
+
 #[tokio::main]
 async fn main() -> Result<()>{
     let arg = Arg::from_args();
-    // TODO temp
-    let dir = Path::new(r"D:\temp\db3");
+    let option = init_config();
+
     let engine = match arg.engine{
-        EngineType::LsmStore => LsmStore::new(&dir)?
+        EngineType::LsmStore => LsmStore::with_options(option.path, option.lsm)?
     };
+
     match arg.mode{
         ModeType::Cli => {
             let mut cli_server = CliServer::new(engine);

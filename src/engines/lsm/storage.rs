@@ -1,5 +1,5 @@
 pub(crate) mod state;
-pub(crate) mod option;
+pub mod option;
 
 use std::collections::{Bound, BTreeSet};
 use std::path::{Path, PathBuf};

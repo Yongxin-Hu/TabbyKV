@@ -6,7 +6,7 @@ use anyhow::Result;
 use crate::engines::lsm::storage::LsmStorage;
 use crate::engines::lsm::storage::option::LsmStorageOptions;
 
-mod lsm;
+pub mod lsm;
 
 pub trait Engine{
     /// 设置 key value

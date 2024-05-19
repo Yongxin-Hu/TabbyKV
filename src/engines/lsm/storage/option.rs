@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
 use crate::engines::lsm::compact::{LeveledCompactionOptions, SimpleLeveledCompactionOptions, TieredCompactionOptions};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag="lsm")]
 pub struct LsmStorageOptions {
     // Block 大小 (Byte)
     pub block_size: usize,
@@ -8,6 +10,7 @@ pub struct LsmStorageOptions {
     pub target_sst_size: usize,
     // 内存中的 memtable 的数量限制(activate+read_only)
     pub num_memtable_limit: usize,
+    #[serde(default)]
     pub compaction_options: CompactionOptions,
     // 是否启用 WAL
     pub enable_wal: bool,
@@ -62,7 +65,7 @@ impl LsmStorageOptions {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CompactionOptions {
     /// Leveled compaction with partial compaction + dynamic level support (= RocksDB's Leveled
     /// Compaction)

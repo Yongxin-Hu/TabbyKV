@@ -8,7 +8,7 @@ pub struct TieredCompactionTask {
     pub bottom_tier_included: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TieredCompactionOptions {
     ///
     pub num_tiers: usize,

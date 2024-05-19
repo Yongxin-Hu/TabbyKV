@@ -1,0 +1,11 @@
+{
+  "linux": "/var/lib/tabbykv",
+  "windows": "C:\\Users\\Public\\Documents\\tabbykv",
+  "lsm": {
+    "block_size": 4096,
+    "target_sst_size": 2048,
+    "num_memtable_limit": 100,
+    "enable_wal": true,
+    "serializable": false
+  }
+}

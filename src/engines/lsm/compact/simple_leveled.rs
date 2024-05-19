@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::engines::lsm::storage::state::LsmStorageState;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimpleLeveledCompactionOptions {
     // （低一层的文件数量 / 高一层的文件数量）
     pub size_ratio_percent: usize,
